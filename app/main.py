@@ -1,7 +1,7 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import auth
+from app.routes import auth, documents, invitations
 
 app = FastAPI(
     title="TaxEaseLK Backend API",
@@ -18,8 +18,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Auth router
+# Include Routers
 app.include_router(auth.router)
+app.include_router(documents.router)
+app.include_router(invitations.router)
 
 @app.get("/")
 def root():

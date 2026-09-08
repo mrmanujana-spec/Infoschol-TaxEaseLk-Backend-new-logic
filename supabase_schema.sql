@@ -1,4 +1,4 @@
-﻿-- ====================================================================
+-- ====================================================================
 -- TaxEaseLK: Supabase Schema for Authentication & User Roles
 -- Run this in your Supabase Dashboard: SQL Editor -> New query -> Run
 -- ====================================================================
@@ -78,5 +78,90 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- 5. Create Documents table for Financial Schedules & Workpapers
+create table if not exists public.documents (
+  id text primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  company_name text not null default 'ABC (Pvt) Ltd',
+  name text not null,
+  file_path text not null,
+  file_size bigint not null default 0,
+  doc_type text not null check (doc_type in (
+    'Financial Statements', 'Trial Balance', 'General Ledger',
+    'Fixed Assets', 'Previous CIT', 'Bank Statements', 'Other'
+  )),
+  status text not null check (status in ('processing', 'processed', 'review_required', 'missing')),
+  ai_confidence_percent integer default 95,
+  extracted_data jsonb default '{}'::jsonb,
+  gdrive_file_id text,
+  gdrive_view_link text,
+  uploaded_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS on documents
+alter table public.documents enable row level security;
+
+drop policy if exists "Allow authenticated users to read documents" on public.documents;
+create policy "Allow authenticated users to read documents"
+  on public.documents for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Allow users to insert own documents" on public.documents;
+create policy "Allow users to insert own documents"
+  on public.documents for insert
+  to authenticated
+  with check (auth.uid() = user_id or user_id is null);
+
+drop policy if exists "Allow users to delete own documents" on public.documents;
+create policy "Allow users to delete own documents"
+  on public.documents for delete
+  to authenticated
+  using (auth.uid() = user_id or user_id is null);
+
+drop policy if exists "Service role has full access on documents" on public.documents;
+create policy "Service role has full access on documents"
+  on public.documents for all
+  to service_role
+  using (true)
+  with check (true);
+
+-- 6. Create Invitations table for Auditor & Finance Team engagements
+create table if not exists public.invitations (
+  id text primary key,
+  company_name text not null default 'ABC (Pvt) Ltd',
+  invite_type text not null check (invite_type in ('AUDITOR', 'FINANCE_TEAM')),
+  email text not null,
+  name text,
+  firm_name text,
+  role text,
+  can_sign_returns boolean default false,
+  status text not null default 'PENDING' check (status in ('PENDING', 'ACCEPTED', 'REVOKED')),
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS on invitations
+alter table public.invitations enable row level security;
+
+drop policy if exists "Allow authenticated users to read invitations" on public.invitations;
+create policy "Allow authenticated users to read invitations"
+  on public.invitations for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Allow users to insert invitations" on public.invitations;
+create policy "Allow users to insert invitations"
+  on public.invitations for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "Service role has full access on invitations" on public.invitations;
+create policy "Service role has full access on invitations"
+  on public.invitations for all
+  to service_role
+  using (true)
+  with check (true);
+
 -- Verify table creation
 select * from public.profiles limit 5;
+

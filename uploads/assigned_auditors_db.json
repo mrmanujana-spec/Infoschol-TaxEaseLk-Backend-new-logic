@@ -1,0 +1,34 @@
+{
+  "ABC Holdings (Pvt) Ltd": {
+    "company_name": "ABC Holdings (Pvt) Ltd",
+    "auditor_email": "audit@karunaratne.lk",
+    "firm_name": "Karunaratne & Associates",
+    "auditor_name": "Mr. A. Karunaratne (FCA)",
+    "status": "Connected",
+    "invited_at": "01 Aug 2026"
+  },
+  "Lanka Trading (Pvt) Ltd": {
+    "company_name": "Lanka Trading (Pvt) Ltd",
+    "auditor_email": "tax@bdo.lk",
+    "firm_name": "BDO Sri Lanka",
+    "auditor_name": "S. Fernando (FCA)",
+    "status": "Invited",
+    "invited_at": "08 Sep 2026 at 12:26 PM"
+  },
+  "Ceylon BioTech (Pvt) Ltd": {
+    "company_name": "Ceylon BioTech (Pvt) Ltd",
+    "auditor_email": "cit@kpmg.lk",
+    "firm_name": "KPMG Sri Lanka",
+    "auditor_name": "P. Wijesinghe (FCA)",
+    "status": "Invited",
+    "invited_at": "08 Sep 2026 at 12:28 PM"
+  },
+  "ABC (Pvt) Ltd": {
+    "company_name": "ABC (Pvt) Ltd",
+    "auditor_email": "nisal.fernando@chartered.lk",
+    "firm_name": "Fernando & Associates Chartered Accountants",
+    "auditor_name": "Nisal Fernando",
+    "status": "Invited",
+    "invited_at": "08 Sep 2026 at 12:30 PM"
+  }
+}
