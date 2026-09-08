@@ -1,0 +1,68 @@
+[
+  {
+    "id": "notif_b1",
+    "recipient_role": "business",
+    "company_name": "ABC Holdings (Pvt) Ltd",
+    "title": "Auditor Response Received",
+    "message": "Mr. Karunaratne (Auditor) replied to your query regarding GL reconciliation.",
+    "type": "info",
+    "link": "/discussions",
+    "is_read": true,
+    "created_at": "10 minutes ago"
+  },
+  {
+    "id": "notif_b2",
+    "recipient_role": "business",
+    "company_name": "ABC Holdings (Pvt) Ltd",
+    "title": "Document Processed",
+    "message": "Trial Balance and P&L statements processed with 98% AI confidence.",
+    "type": "success",
+    "link": "/documents",
+    "is_read": true,
+    "created_at": "1 hour ago"
+  },
+  {
+    "id": "notif_b3",
+    "recipient_role": "business",
+    "company_name": "ABC Holdings (Pvt) Ltd",
+    "title": "Action Required: Depreciation Review",
+    "message": "Auditor flagged clarification item for FY2025/26 fixed asset depreciation schedule.",
+    "type": "critical",
+    "link": "/auditor-review",
+    "is_read": true,
+    "created_at": "2 hours ago"
+  },
+  {
+    "id": "notif_a1",
+    "recipient_role": "auditor",
+    "company_name": "Ceylon BioTech (Pvt) Ltd",
+    "title": "New Audit Pack Submitted",
+    "message": "Ceylon BioTech (Pvt) Ltd submitted complete CIT tax document pack for audit review.",
+    "type": "info",
+    "link": "/auditor-documents",
+    "is_read": true,
+    "created_at": "15 minutes ago"
+  },
+  {
+    "id": "notif_a2",
+    "recipient_role": "auditor",
+    "company_name": "Lanka Trading (Pvt) Ltd",
+    "title": "New Discussion Question",
+    "message": "Lanka Trading finance team opened discussion on R&D Tax Concession rates.",
+    "type": "warning",
+    "link": "/auditor-discussions",
+    "is_read": true,
+    "created_at": "45 minutes ago"
+  },
+  {
+    "id": "notif_a3",
+    "recipient_role": "auditor",
+    "company_name": "ABC Holdings (Pvt) Ltd",
+    "title": "Client Response Uploaded",
+    "message": "ABC Holdings finance team uploaded supporting invoice breakdown for line 42.",
+    "type": "success",
+    "link": "/responses",
+    "is_read": true,
+    "created_at": "3 hours ago"
+  }
+]

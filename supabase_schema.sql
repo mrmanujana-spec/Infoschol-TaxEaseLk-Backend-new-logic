@@ -81,7 +81,7 @@ create trigger on_auth_user_created
 -- 5. Create Documents table for Financial Schedules & Workpapers
 create table if not exists public.documents (
   id text primary key,
-  user_id uuid references auth.users(id) on delete cascade,
+  user_id uuid references public.profiles(id) on delete cascade,
   company_name text not null default 'ABC (Pvt) Ltd',
   name text not null,
   file_path text not null,
@@ -137,6 +137,7 @@ create table if not exists public.invitations (
   role text,
   can_sign_returns boolean default false,
   status text not null default 'PENDING' check (status in ('PENDING', 'ACCEPTED', 'REVOKED')),
+  invited_by uuid references public.profiles(id) on delete set null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -172,7 +173,7 @@ create table if not exists public.discussion_threads (
   last_message text,
   last_updated timestamp with time zone default timezone('utc'::text, now()) not null,
   auditor_email text,
-  created_by uuid references auth.users(id) on delete set null,
+  created_by uuid references public.profiles(id) on delete set null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -182,7 +183,7 @@ create table if not exists public.discussion_messages (
   sender text not null,
   sender_role text not null check (sender_role in ('Company', 'Auditor')),
   text text not null,
-  user_id uuid references auth.users(id) on delete set null,
+  user_id uuid references public.profiles(id) on delete set null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -195,6 +196,31 @@ create policy "Service role full access threads" on public.discussion_threads fo
 
 create policy "Allow all authenticated users messages" on public.discussion_messages for all to authenticated using (true) with check (true);
 create policy "Service role full access messages" on public.discussion_messages for all to service_role using (true) with check (true);
+
+-- -----------------------------------------------------------------------------
+-- 6. NOTIFICATIONS TABLE
+-- -----------------------------------------------------------------------------
+create table if not exists public.notifications (
+    id text primary key,
+    user_id uuid references public.profiles(id) on delete cascade,
+    recipient_role text not null check (recipient_role in ('business', 'auditor')),
+    company_name text,
+    thread_id text references public.discussion_threads(id) on delete set null,
+    title text not null,
+    message text not null,
+    type text not null default 'info' check (type in ('critical', 'warning', 'info', 'success')),
+    link text,
+    is_read boolean default false,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_notifications_user on public.notifications (user_id);
+create index if not exists idx_notifications_role on public.notifications (recipient_role, is_read);
+create index if not exists idx_notifications_company on public.notifications (company_name);
+
+alter table public.notifications enable row level security;
+create policy "Allow all authenticated users notifications" on public.notifications for all to authenticated using (true) with check (true);
+create policy "Service role full access notifications" on public.notifications for all to service_role using (true) with check (true);
 
 -- Verify table creation
 select * from public.profiles limit 5;
