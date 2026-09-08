@@ -162,6 +162,41 @@ create policy "Service role has full access on invitations"
   using (true)
   with check (true);
 
+-- 7. Create Discussion Threads & Messages for Business <-> Auditor Clarifications
+create table if not exists public.discussion_threads (
+  id text primary key,
+  company_name text not null default 'ABC Holdings (Pvt) Ltd',
+  topic text not null,
+  category text default 'General Audit Inquiry',
+  status text not null default 'Open' check (status in ('Open', 'Closed')),
+  last_message text,
+  last_updated timestamp with time zone default timezone('utc'::text, now()) not null,
+  auditor_email text,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.discussion_messages (
+  id text primary key,
+  thread_id text references public.discussion_threads(id) on delete cascade not null,
+  sender text not null,
+  sender_role text not null check (sender_role in ('Company', 'Auditor')),
+  text text not null,
+  user_id uuid references auth.users(id) on delete set null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS
+alter table public.discussion_threads enable row level security;
+alter table public.discussion_messages enable row level security;
+
+create policy "Allow all authenticated users threads" on public.discussion_threads for all to authenticated using (true) with check (true);
+create policy "Service role full access threads" on public.discussion_threads for all to service_role using (true) with check (true);
+
+create policy "Allow all authenticated users messages" on public.discussion_messages for all to authenticated using (true) with check (true);
+create policy "Service role full access messages" on public.discussion_messages for all to service_role using (true) with check (true);
+
 -- Verify table creation
 select * from public.profiles limit 5;
+
 
