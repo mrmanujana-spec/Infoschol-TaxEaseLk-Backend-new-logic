@@ -1,4 +1,4 @@
-﻿from supabase import create_client, Client
+from supabase import create_client, Client
 from app.config import settings
 from fastapi import HTTPException
 

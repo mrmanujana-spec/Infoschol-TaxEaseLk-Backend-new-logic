@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, HTTPException, Header, status
+from typing import Dict, Any, cast
+from fastapi import APIRouter, HTTPException, Header, status
 from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
@@ -146,7 +147,7 @@ def login(req: LoginRequest):
         try:
             profile_query = admin_client.table("profiles").select("*").eq("id", user_id).execute()
             if profile_query.data and len(profile_query.data) > 0:
-                p = profile_query.data[0]
+                p: Dict[str, Any] = cast(Dict[str, Any], profile_query.data[0])
                 display_name = p.get("display_name") or display_name
                 role = normalize_role(p.get("role") or role)
                 category = p.get("category") or category
@@ -277,7 +278,7 @@ def get_current_user(authorization: str = Header(None)):
         try:
             profile_query = admin_client.table("profiles").select("*").eq("id", user_id).execute()
             if profile_query.data and len(profile_query.data) > 0:
-                p = profile_query.data[0]
+                p: Dict[str, Any] = cast(Dict[str, Any], profile_query.data[0])
                 display_name = p.get("display_name") or display_name
                 role = normalize_role(p.get("role") or role)
                 category = p.get("category") or category

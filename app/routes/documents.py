@@ -2,7 +2,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -163,6 +163,7 @@ def get_documents_summary(
             query = query.ilike("company_name", company_name.strip())
         res = query.order("uploaded_at", desc=True).execute()
         if res.data and len(res.data) > 0:
+            docs_data = cast(List[Dict[str, Any]], res.data)
             docs = [
                 {
                     "id": str(d["id"]),
@@ -177,7 +178,7 @@ def get_documents_summary(
                     "extracted_data": d.get("extracted_data") or {},
                     "company_name": d.get("company_name") or "ABC Holdings (Pvt) Ltd",
                 }
-                for d in res.data
+                for d in docs_data
             ]
     except Exception:
         pass

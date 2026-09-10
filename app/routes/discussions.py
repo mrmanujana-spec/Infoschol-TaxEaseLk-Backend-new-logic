@@ -2,7 +2,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
 from fastapi import APIRouter, Header, HTTPException, status
 from app.database import get_supabase_admin_client
@@ -167,9 +167,11 @@ def get_discussions(
             query = query.ilike("company_name", company_name.strip())
         res = query.order("last_updated", desc=True).execute()
         if res.data and len(res.data) > 0:
-            for t in res.data:
+            threads_data = cast(List[Dict[str, Any]], res.data)
+            for t in threads_data:
                 # fetch messages
                 m_res = client.table("discussion_messages").select("*").eq("thread_id", t["id"]).order("created_at").execute()
+                messages_data = cast(List[Dict[str, Any]], m_res.data or [])
                 messages = [
                     {
                         "id": m["id"],
@@ -178,7 +180,7 @@ def get_discussions(
                         "text": m["text"],
                         "timestamp": datetime.fromisoformat(m["created_at"]).strftime("%d %b, %H:%M") if m.get("created_at") else "Recently"
                     }
-                    for m in (m_res.data or [])
+                    for m in messages_data
                 ]
                 threads.append({
                     "id": t["id"],

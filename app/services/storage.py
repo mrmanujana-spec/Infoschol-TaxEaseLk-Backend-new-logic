@@ -67,7 +67,7 @@ class StorageService:
             return files[0]['id']
         
         # Create folder
-        metadata = {
+        metadata: Dict[str, Any] = {
             'name': folder_name,
             'mimeType': 'application/vnd.google-apps.folder'
         }

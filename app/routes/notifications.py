@@ -2,7 +2,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, cast
 from fastapi import APIRouter, Header, HTTPException, Query
 from app.config import settings
 from app.database import get_supabase_admin_client
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
 
 LOCAL_NOTIFICATIONS_PATH = os.path.join(storage_service.uploads_dir, "notifications_db.json")
 
-def _load_notifications() -> List[dict]:
+def _load_notifications() -> List[Dict[str, Any]]:
     if os.path.exists(LOCAL_NOTIFICATIONS_PATH):
         try:
             with open(LOCAL_NOTIFICATIONS_PATH, "r", encoding="utf-8") as f:
@@ -22,7 +22,7 @@ def _load_notifications() -> List[dict]:
             return []
     return []
 
-def _save_notifications(notifications: List[dict]):
+def _save_notifications(notifications: List[Dict[str, Any]]):
     os.makedirs(os.path.dirname(LOCAL_NOTIFICATIONS_PATH), exist_ok=True)
     with open(LOCAL_NOTIFICATIONS_PATH, "w", encoding="utf-8") as f:
         json.dump(notifications, f, indent=2, ensure_ascii=False)
@@ -107,7 +107,7 @@ def get_notifications(
     target_role = role.strip().lower()
     
     # 1. Try Supabase
-    items = []
+    items: List[Dict[str, Any]] = []
     try:
         client = get_supabase_admin_client()
         query = client.table("notifications").select("*").eq("recipient_role", target_role)
@@ -115,7 +115,7 @@ def get_notifications(
             query = query.ilike("company_name", company_name.strip())
         res = query.order("created_at", desc=True).execute()
         if res.data and len(res.data) > 0:
-            items = res.data
+            items = cast(List[Dict[str, Any]], res.data)
     except Exception:
         pass
 
