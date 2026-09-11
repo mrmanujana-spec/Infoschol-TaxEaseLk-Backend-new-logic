@@ -1,5 +1,25 @@
 [
   {
+    "id": "doc_1789027719276",
+    "name": "TaxEaseLK_Pitch_Guide.pdf",
+    "type": "Previous CIT",
+    "status": "processed",
+    "ai_confidence_percent": 99,
+    "uploaded_date": "10 Sep 2026",
+    "size_label": "5.4 KB",
+    "file_path": "uploads/Professional Auditor/2025-26/TaxEaseLK_Pitch_Guide.pdf",
+    "view_link": "https://drive.google.com/file/d/gdrive_TaxEaseLK_Pitch_Guide.pdf/view",
+    "download_url": "/api/documents/download/TaxEaseLK_Pitch_Guide.pdf",
+    "extracted_data": {
+      "document_name": "TaxEaseLK_Pitch_Guide.pdf",
+      "detected_type": "Previous CIT",
+      "file_size_bytes": 5554,
+      "review_reasons": []
+    },
+    "user_id": "usr_default_company",
+    "company_name": "Professional Auditor"
+  },
+  {
     "id": "doc_1788849757399",
     "name": "Lanka_Trading_Trial_Balance.xlsx",
     "type": "Trial Balance",
