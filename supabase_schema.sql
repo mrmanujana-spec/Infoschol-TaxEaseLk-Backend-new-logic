@@ -222,7 +222,107 @@ alter table public.notifications enable row level security;
 create policy "Allow all authenticated users notifications" on public.notifications for all to authenticated using (true) with check (true);
 create policy "Service role full access notifications" on public.notifications for all to service_role using (true) with check (true);
 
+-- -----------------------------------------------------------------------------
+-- 8. AUDITOR ENGAGEMENTS TABLE (Strict 1 Active Auditor Per Business Rule)
+-- -----------------------------------------------------------------------------
+create table if not exists public.auditor_engagements (
+    id text primary key,
+    company_name text not null,
+    tax_year text not null default '2025/26',
+    auditor_email text not null,
+    auditor_name text not null,
+    auditor_firm text not null,
+    status text not null default 'ACTIVE' check (status in ('ACTIVE', 'CONCLUDED', 'TERMINATED')),
+    appointed_date timestamp with time zone default timezone('utc'::text, now()) not null,
+    concluded_date timestamp with time zone,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- CRITICAL UNIQUE CONSTRAINT: A company can have strictly ONE 'ACTIVE' auditor per tax year!
+create unique index if not exists idx_unique_active_auditor_per_company_year 
+    on public.auditor_engagements (company_name, tax_year) 
+    where (status = 'ACTIVE');
+
+create index if not exists idx_engagements_company on public.auditor_engagements (company_name);
+create index if not exists idx_engagements_auditor on public.auditor_engagements (auditor_email);
+
+alter table public.auditor_engagements enable row level security;
+create policy "Allow all authenticated users engagements" on public.auditor_engagements for all to authenticated using (true) with check (true);
+create policy "Service role full access engagements" on public.auditor_engagements for all to service_role using (true) with check (true);
+
+-- -----------------------------------------------------------------------------
+-- 9. AUDITOR REVIEWS TABLE (Business Ratings & Reviews for Assigned Auditor)
+-- -----------------------------------------------------------------------------
+create table if not exists public.auditor_reviews (
+    id text primary key,
+    company_name text not null,
+    tax_year text not null default '2025/26',
+    auditor_email text not null,
+    auditor_name text not null,
+    auditor_firm text not null,
+    rating integer not null check (rating >= 1 and rating <= 5),
+    timeliness_rating integer check (timeliness_rating >= 1 and timeliness_rating <= 5),
+    communication_rating integer check (communication_rating >= 1 and communication_rating <= 5),
+    technical_rating integer check (technical_rating >= 1 and technical_rating <= 5),
+    review_comment text,
+    client_reviewer_name text default 'Finance Representative',
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- A company can submit 1 rating per auditor per tax year (or update it)
+create unique index if not exists idx_unique_company_auditor_review 
+    on public.auditor_reviews (company_name, auditor_email, tax_year);
+
+create index if not exists idx_reviews_auditor on public.auditor_reviews (auditor_email);
+
+alter table public.auditor_reviews enable row level security;
+create policy "Allow all authenticated users reviews" on public.auditor_reviews for all to authenticated using (true) with check (true);
+create policy "Service role full access reviews" on public.auditor_reviews for all to service_role using (true) with check (true);
+
+-- -----------------------------------------------------------------------------
+-- 10. IRD STATUTORY TAX RULES TABLE (Dynamic Sri Lankan Tax Rates & Gazettes)
+-- -----------------------------------------------------------------------------
+create table if not exists public.ird_tax_rules (
+    tax_year text primary key,
+    standard_cit_rate numeric not null default 0.30,
+    sin_tax_rate numeric not null default 0.40,
+    concession_rate numeric default 0.15,
+    capital_allowance_rates jsonb default '{
+        "computers_software": 0.20,
+        "plant_machinery": 0.20,
+        "commercial_buildings": 0.05
+    }'::jsonb,
+    entertainment_disallowable_pct numeric not null default 1.00,
+    gazette_reference text default 'Inland Revenue (Amendment) Act No. 45 of 2022',
+    notes text,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.ird_tax_rules enable row level security;
+drop policy if exists "Allow all authenticated users read tax rules" on public.ird_tax_rules;
+create policy "Allow all authenticated users read tax rules" on public.ird_tax_rules for select to authenticated using (true);
+
+drop policy if exists "Service role full access tax rules" on public.ird_tax_rules;
+create policy "Service role full access tax rules" on public.ird_tax_rules for all to service_role using (true) with check (true);
+
+-- Seed default Sri Lanka IRD tax years
+insert into public.ird_tax_rules (tax_year, standard_cit_rate, sin_tax_rate, concession_rate, gazette_reference, notes)
+values 
+  ('2024/25', 0.30, 0.40, 0.15, 'Inland Revenue (Amendment) Act No. 45 of 2022', 'Unified standard corporate tax rate 30%'),
+  ('2025/26', 0.30, 0.40, 0.15, 'Inland Revenue Act No. 24 of 2017 as amended', 'Current statutory assessment year'),
+  ('2026/27', 0.30, 0.40, 0.15, 'Subject to upcoming National Budget Gazette', 'Provisional rate setting')
+on conflict (tax_year) do update set
+  standard_cit_rate = excluded.standard_cit_rate,
+  updated_at = now();
+
+-- Ensure review_status exists on auditor_engagements
+alter table public.auditor_engagements 
+    add column if not exists review_status text not null default 'IN_PROGRESS';
+
 -- Verify table creation
-select * from public.profiles limit 5;
+select * from public.ird_tax_rules limit 5;
+
 
 
