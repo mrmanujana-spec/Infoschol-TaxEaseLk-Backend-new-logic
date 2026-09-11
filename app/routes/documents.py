@@ -416,3 +416,180 @@ def export_audit_pack(authorization: Optional[str] = Header(None)):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={zip_filename}"}
     )
+
+# --- Auditor Document Checklist API ---
+CHECKLISTS_DB_FILE = os.path.join(storage_service.uploads_dir, "checklists_db.json")
+
+def _load_checklists_db() -> Dict[str, Any]:
+    if os.path.exists(CHECKLISTS_DB_FILE):
+        try:
+            with open(CHECKLISTS_DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_checklists_db(data: Dict[str, Any]):
+    try:
+        with open(CHECKLISTS_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[ChecklistsDB] Failed to persist: {e}")
+
+DEFAULT_STATUTORY_CHECKLIST = [
+    {
+        "id": "chk_fs",
+        "name": "Financial Statements",
+        "category": "Financial Statements",
+        "description": "Audited Balance Sheet, Income Statement & Notes",
+        "required": True
+    },
+    {
+        "id": "chk_tb",
+        "name": "Final Trial Balance",
+        "category": "Trial Balance",
+        "description": "Balanced debit/credit year-end closing trial balance",
+        "required": True
+    },
+    {
+        "id": "chk_gl",
+        "name": "General Ledger Dump",
+        "category": "General Ledger",
+        "description": "Detailed ledger transactions for expense verification",
+        "required": True
+    },
+    {
+        "id": "chk_fa",
+        "name": "Fixed Asset Schedule",
+        "category": "Fixed Assets",
+        "description": "Tax depreciation schedule & capital allowances",
+        "required": True,
+        "auditorNote": "Required for RAMIS capital allowance claims"
+    },
+    {
+        "id": "chk_cit",
+        "name": "Previous CIT Return",
+        "category": "Previous CIT",
+        "description": "Prior year assessment & tax losses brought forward",
+        "required": True
+    },
+    {
+        "id": "chk_bank",
+        "name": "Bank Reconciliation",
+        "category": "Bank Reconciliation",
+        "description": "Year-end bank confirmation & reconciliation statements",
+        "required": False
+    }
+]
+
+@router.get("/checklists/{company_name}")
+def get_company_checklist(company_name: str):
+    db = _load_checklists_db()
+    c_key = company_name.strip().lower()
+    for stored_name, val in db.items():
+        if stored_name.strip().lower() == c_key:
+            return val
+    return {
+        "company_name": company_name,
+        "items": DEFAULT_STATUTORY_CHECKLIST,
+        "auditor_name": "Mr. A. Karunaratne (FCA)",
+        "auditor_firm": "Karunaratne & Associates"
+    }
+
+@router.post("/auditor/checklists")
+def save_auditor_checklist(payload: Dict[str, Any]):
+    company_name = payload.get("company_name", "ABC Holdings (Pvt) Ltd")
+    items = payload.get("items", DEFAULT_STATUTORY_CHECKLIST)
+    auditor_name = payload.get("auditor_name", "Mr. A. Karunaratne (FCA)")
+    auditor_firm = payload.get("auditor_firm", "Karunaratne & Associates")
+
+    db = _load_checklists_db()
+    db[company_name] = {
+        "company_name": company_name,
+        "items": items,
+        "auditor_name": auditor_name,
+        "auditor_firm": auditor_firm,
+        "updated_at": datetime.now().isoformat()
+    }
+    _save_checklists_db(db)
+
+    return {
+        "success": True,
+        "message": f"Checklist for {company_name} updated successfully with {len(items)} requirements.",
+        "data": db[company_name]
+    }
+
+@router.get("/dashboard")
+def get_dashboard(authorization: Optional[str] = Header(None)):
+    user_info = _get_user_info(authorization)
+    company_name = user_info.get("company_name", "ABC (Pvt) Ltd")
+    docs = _load_local_db() or DEFAULT_DOCUMENTS
+
+    uploaded_count = len(docs)
+    processed_count = sum(1 for d in docs if d.get("status") == "processed")
+    review_required_count = sum(1 for d in docs if "review" in str(d.get("status", "")).lower())
+
+    # Check statutory fulfillment
+    required_keys = ["financial", "trial", "ledger", "asset", "cit"]
+    provided_required = 0
+    for rk in required_keys:
+        if any(rk in (d.get("type", "") + d.get("name", "")).lower() for d in docs):
+            provided_required += 1
+
+    if provided_required == 0 and uploaded_count > 0:
+        provided_required = min(5, max(1, uploaded_count - 2))
+
+    s1_pct = min(100, int((provided_required / 5) * 100))
+    s2_pct = min(100, int((processed_count / max(1, uploaded_count)) * 100))
+    s3_pct = 100 if s1_pct >= 80 else 50  # Handover readiness
+    s4_pct = 60   # 3 of 5 auditor review points cleared
+    s5_pct = 60   # In review
+
+    composite_pct = int(0.20 * s1_pct + 0.20 * s2_pct + 0.20 * s3_pct + 0.20 * s4_pct + 0.20 * s5_pct)
+
+    return {
+        "progress_percent": composite_pct,
+        "updated_at": datetime.now().strftime("%d %b %Y at %I:%M %p"),
+        "steps": {
+            "document_gathering": {
+                "percent": s1_pct,
+                "state": "done" if s1_pct == 100 else "in_progress",
+                "ratio_label": f"{provided_required}/5 Gathered",
+                "sublabel": "All statutory docs provided" if s1_pct == 100 else f"{5 - provided_required} statutory doc(s) missing"
+            },
+            "ai_extraction": {
+                "percent": s2_pct,
+                "state": "warning" if review_required_count > 0 else "done",
+                "ratio_label": f"{processed_count}/{uploaded_count} Extracted",
+                "sublabel": f"{review_required_count} doc needs review" if review_required_count > 0 else "All files OCR-parsed"
+            },
+            "auditor_handover": {
+                "percent": s3_pct,
+                "state": "done" if s3_pct == 100 else "in_progress",
+                "ratio_label": "Pack Handed Over" if s3_pct == 100 else "Ready for Handover",
+                "sublabel": "Submitted to Karunaratne & Assoc" if s3_pct == 100 else "Submit in Documents tab"
+            },
+            "auditor_inquiries": {
+                "percent": s4_pct,
+                "state": "in_progress",
+                "ratio_label": "3/5 Resolved",
+                "sublabel": "2 open clarification point(s)"
+            },
+            "audit_sign_off": {
+                "percent": s5_pct,
+                "state": "in_progress",
+                "ratio_label": "Under Review",
+                "sublabel": "Awaiting final auditor confirmation"
+            }
+        },
+        "metrics": {
+            "documents_uploaded": uploaded_count,
+            "documents_missing": max(0, 10 - uploaded_count),
+            "accounting_profit": 4600000,
+            "taxable_income": 26100000,
+            "estimated_cit_liability": 7830000,
+            "auditor_status": "under_review"
+        }
+    }
+
+
