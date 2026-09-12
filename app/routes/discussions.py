@@ -79,45 +79,48 @@ def get_discussions(
     """
     # 1. Try reading from Supabase
     threads = []
+    supabase_queried = False
     try:
         client = get_supabase_admin_client()
-        query = client.table("discussion_threads").select("*")
-        if company_name:
-            query = query.ilike("company_name", company_name.strip())
-        res = query.order("last_updated", desc=True).execute()
-        if res.data and len(res.data) > 0:
-            threads_data = cast(List[Dict[str, Any]], res.data)
-            for t in threads_data:
-                # fetch messages
-                m_res = client.table("discussion_messages").select("*").eq("thread_id", t["id"]).order("created_at").execute()
-                messages_data = cast(List[Dict[str, Any]], m_res.data or [])
-                messages = [
-                    {
-                        "id": m["id"],
-                        "sender": m["sender"],
-                        "senderRole": m["sender_role"],
-                        "text": m["text"],
-                        "timestamp": datetime.fromisoformat(m["created_at"]).strftime("%d %b, %H:%M") if m.get("created_at") else "Recently"
-                    }
-                    for m in messages_data
-                ]
-                threads.append({
-                    "id": t["id"],
-                    "companyName": t["company_name"],
-                    "company_name": t["company_name"],
-                    "topic": t["topic"],
-                    "category": t.get("category") or "General Audit Inquiry",
-                    "lastMessage": t.get("last_message") or (messages[-1]["text"] if messages else ""),
-                    "lastUpdated": datetime.fromisoformat(t["last_updated"]).strftime("%d %b, %H:%M") if t.get("last_updated") else "Recently",
-                    "unreadCount": 0,
-                    "status": t.get("status") or "Open",
-                    "messages": messages
-                })
-    except Exception:
-        pass
+        if client:
+            query = client.table("discussion_threads").select("*")
+            if company_name:
+                query = query.ilike("company_name", company_name.strip())
+            res = query.order("last_updated", desc=True).execute()
+            if res.data is not None:
+                supabase_queried = True
+                threads_data = cast(List[Dict[str, Any]], res.data)
+                for t in threads_data:
+                    # fetch messages
+                    m_res = client.table("discussion_messages").select("*").eq("thread_id", t["id"]).order("created_at").execute()
+                    messages_data = cast(List[Dict[str, Any]], m_res.data or [])
+                    messages = [
+                        {
+                            "id": m["id"],
+                            "sender": m["sender"],
+                            "senderRole": m["sender_role"],
+                            "text": m["text"],
+                            "timestamp": datetime.fromisoformat(m["created_at"]).strftime("%d %b, %H:%M") if m.get("created_at") else "Recently"
+                        }
+                        for m in messages_data
+                    ]
+                    threads.append({
+                        "id": t["id"],
+                        "companyName": t["company_name"],
+                        "company_name": t["company_name"],
+                        "topic": t["topic"],
+                        "category": t.get("category") or "General Audit Inquiry",
+                        "lastMessage": t.get("last_message") or (messages[-1]["text"] if messages else ""),
+                        "lastUpdated": datetime.fromisoformat(t["last_updated"]).strftime("%d %b, %H:%M") if t.get("last_updated") else "Recently",
+                        "unreadCount": 0,
+                        "status": t.get("status") or "Open",
+                        "messages": messages
+                    })
+    except Exception as e:
+        print(f"[Discussions] Query note: {e}")
 
-    # 2. If no threads from Supabase, read from local vault DB
-    if not threads:
+    # 2. Local DB Fallback ONLY if Supabase is offline/unreachable
+    if not supabase_queried:
         local_threads = _load_discussions()
         if not local_threads:
             _save_discussions(DEFAULT_DISCUSSIONS)

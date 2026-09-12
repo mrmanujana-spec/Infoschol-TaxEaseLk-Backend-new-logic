@@ -299,6 +299,7 @@ def get_auditor_invitations(
             pass
 
     invites: List[Dict[str, Any]] = []
+    supabase_queried = False
     admin_client = get_supabase_admin_client()
     if admin_client:
         try:
@@ -306,12 +307,14 @@ def get_auditor_invitations(
             if target_email:
                 query = query.ilike("email", target_email)
             res = query.order("created_at", desc=True).execute()
-            if res.data:
+            if res.data is not None:
                 invites = cast(List[Dict[str, Any]], res.data)
+                supabase_queried = True
         except Exception as e:
             print(f"[Invitations] Supabase query note: {e}")
 
-    if not invites:
+    # Local fallback only if Supabase is unreachable
+    if not supabase_queried:
         all_local = _load_json(INVITES_DB_FILE) or []
         if isinstance(all_local, list):
             if target_email:

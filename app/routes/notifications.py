@@ -89,19 +89,22 @@ def get_notifications(
     
     # 1. Try Supabase
     items: List[Dict[str, Any]] = []
+    supabase_queried = False
     try:
         client = get_supabase_admin_client()
-        query = client.table("notifications").select("*").eq("recipient_role", target_role)
-        if company_name and target_role == "business":
-            query = query.ilike("company_name", company_name.strip())
-        res = query.order("created_at", desc=True).execute()
-        if res.data and len(res.data) > 0:
-            items = cast(List[Dict[str, Any]], res.data)
-    except Exception:
-        pass
+        if client:
+            query = client.table("notifications").select("*").eq("recipient_role", target_role)
+            if company_name and target_role == "business":
+                query = query.ilike("company_name", company_name.strip())
+            res = query.order("created_at", desc=True).execute()
+            if res.data is not None:
+                items = cast(List[Dict[str, Any]], res.data)
+                supabase_queried = True
+    except Exception as e:
+        print(f"[Notifications] Query note: {e}")
 
-    # 2. Local Vault Fallback
-    if not items:
+    # 2. Local Vault Fallback ONLY if Supabase is offline/unreachable
+    if not supabase_queried:
         all_local = _load_notifications()
         if not all_local:
             _save_notifications(DEFAULT_NOTIFICATIONS)
