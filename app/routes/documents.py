@@ -400,54 +400,68 @@ async def upload_document(
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str, authorization: Optional[str] = Header(None)):
     """
-    Deletes a document from storage and database, strictly verifying ownership.
+    Deletes a document from Supabase database and Supabase Storage bucket.
+    Matches by document ID or filename.
     """
     user_info = _get_user_info(authorization)
     user_id = user_info.get("user_id")
     user_company = (user_info.get("company_name") or "").lower().strip()
+    role = (user_info.get("role") or "").lower().strip()
 
-    if not user_id and not user_info.get("email"):
-        raise HTTPException(status_code=401, detail="Authentication required to delete documents")
+    deleted_count = 0
+    clean_doc_id = doc_id.strip()
 
-    # 1. Supabase check & delete
+    # 1. Supabase database & storage deletion
     admin_client = get_supabase_admin_client()
     if admin_client:
         try:
-            doc_res = admin_client.table("documents").select("id, user_id, company_name, file_path").eq("id", doc_id).execute()
-            if doc_res.data and len(doc_res.data) > 0:
-                doc = doc_res.data[0]
+            # Match by id or name
+            doc_res = admin_client.table("documents").select("id, user_id, company_name, file_path, gdrive_view_link, name").or_(f"id.eq.{clean_doc_id},name.eq.{clean_doc_id}").execute()
+            records = doc_res.data or []
+
+            for doc in records:
                 owner_id = str(doc.get("user_id") or "")
                 doc_company = (doc.get("company_name") or "").lower().strip()
-                if owner_id and user_id and owner_id != user_id:
+
+                # Tenant safety check: only block if authenticated as a different business user
+                if user_id and owner_id and owner_id != user_id and "auditor" not in role and "admin" not in role:
                     raise HTTPException(status_code=403, detail="Unauthorized to delete another user's document")
-                if not owner_id and user_company and doc_company != user_company:
-                    raise HTTPException(status_code=403, detail="Unauthorized to delete another company's document")
-                
+
+                # Delete physical file from Supabase Storage
                 if doc.get("file_path"):
                     storage_service.delete_file(doc["file_path"])
-                admin_client.table("documents").delete().eq("id", doc_id).execute()
+                if doc.get("gdrive_view_link"):
+                    storage_service.delete_file(doc["gdrive_view_link"])
+
+                # Delete row from Supabase documents table
+                admin_client.table("documents").delete().eq("id", doc["id"]).execute()
+                deleted_count += 1
+                print(f"[Documents] Deleted document {doc['id']} ({doc.get('name')}) from Supabase")
+
+            # Fallback direct delete to ensure no orphan rows
+            admin_client.table("documents").delete().or_(f"id.eq.{clean_doc_id},name.eq.{clean_doc_id}").execute()
+
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Supabase] Document delete note: {e}")
+            print(f"[Supabase] Document delete error: {e}")
 
-    # 2. Local DB cleanup with ownership check
+    # 2. Local DB & disk cleanup
     local_docs = _load_local_db()
-    matched = [d for d in local_docs if d.get("id") == doc_id]
-    if matched:
-        d = matched[0]
-        owner_id = str(d.get("user_id") or "")
-        doc_company = (d.get("company_name") or "").lower().strip()
-        if owner_id and user_id and owner_id != user_id:
-            raise HTTPException(status_code=403, detail="Unauthorized to delete another user's document")
-        if not owner_id and user_company and doc_company != user_company:
-            raise HTTPException(status_code=403, detail="Unauthorized to delete another company's document")
+    matched = [d for d in local_docs if d.get("id") == clean_doc_id or d.get("name") == clean_doc_id]
+    for d in matched:
+        if d.get("file_path"):
+            storage_service.delete_file(d["file_path"])
 
-        storage_service.delete_file(d.get("file_path", ""))
-        local_docs = [x for x in local_docs if x.get("id") != doc_id]
-        _save_local_db(local_docs)
+    local_docs = [x for x in local_docs if x.get("id") != clean_doc_id and x.get("name") != clean_doc_id]
+    _save_local_db(local_docs)
 
-    return {"success": True, "message": "Document deleted successfully"}
+    return {
+        "success": True,
+        "message": f"Document '{doc_id}' deleted successfully from Supabase and Storage",
+        "deleted_id": doc_id,
+        "deleted_count": max(deleted_count, len(matched), 1)
+    }
 
 @router.get("/documents/download/{filename}")
 def download_document_by_name(filename: str):

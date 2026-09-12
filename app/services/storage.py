@@ -127,27 +127,40 @@ class StorageService:
         if not file_path_or_id:
             return False
 
+        import urllib.parse
+        raw = urllib.parse.unquote(str(file_path_or_id).replace("\\", "/"))
+
+        # Extract bucket-relative path
+        cleaned = raw
+        if "supabase.co/storage/v1/object/public/" in cleaned:
+            cleaned = cleaned.split("supabase.co/storage/v1/object/public/", 1)[1]
+        if f"{self.bucket_name}/" in cleaned:
+            cleaned = cleaned.split(f"{self.bucket_name}/", 1)[1]
+        if cleaned.startswith("uploads/"):
+            cleaned = cleaned.replace("uploads/", "", 1)
+        cleaned = cleaned.lstrip("/")
+
         deleted = False
         # 1. Try Supabase Storage deletion
         admin_client = self._get_admin_client()
         if admin_client:
             try:
-                paths_to_remove = [file_path_or_id]
-                if file_path_or_id.startswith("uploads/"):
-                    paths_to_remove.append(file_path_or_id.replace("uploads/", ""))
-                admin_client.storage.from_(self.bucket_name).remove(paths_to_remove)
+                targets = list({t for t in [cleaned, raw, file_path_or_id] if t})
+                admin_client.storage.from_(self.bucket_name).remove(targets)
+                print(f"[StorageService] Deleted from Supabase Storage '{self.bucket_name}': {targets}")
                 deleted = True
             except Exception as e:
                 print(f"[StorageService] Failed to delete from Supabase storage: {e}")
 
         # 2. Local disk cleanup
-        full_path = os.path.join(self.base_dir, file_path_or_id)
-        if os.path.exists(full_path):
-            try:
-                os.remove(full_path)
-                deleted = True
-            except Exception as e:
-                print(f"[StorageService] Failed to delete local file {full_path}: {e}")
+        for p in [file_path_or_id, raw, cleaned]:
+            full_path = os.path.join(self.base_dir, p) if not os.path.isabs(p) else p
+            if os.path.exists(full_path) and os.path.isfile(full_path):
+                try:
+                    os.remove(full_path)
+                    deleted = True
+                except Exception as e:
+                    print(f"[StorageService] Failed to delete local file {full_path}: {e}")
 
         return deleted
 
