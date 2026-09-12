@@ -41,3 +41,18 @@ class TeamMemberResponse(BaseModel):
 
 class TeamListResponse(BaseModel):
     team: List[TeamMemberResponse]
+
+class ClientInvitationItem(BaseModel):
+    id: str
+    company_name: str
+    email: str
+    firm_name: Optional[str] = None
+    auditor_name: Optional[str] = None
+    tax_year: Optional[str] = "2025/26"
+    status: str
+    created_at: str
+
+class ClientInvitationsListResponse(BaseModel):
+    invitations: List[ClientInvitationItem]
+    total_count: int
+    pending_count: int

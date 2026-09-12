@@ -2,11 +2,12 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
-from fastapi import APIRouter, Header, HTTPException, status
-from app.database import get_supabase_admin_client
+from fastapi import APIRouter, Header, HTTPException, Query, status
+from app.database import get_supabase_client, get_supabase_admin_client
 from app.services.storage import storage_service
+from app.routes.notifications import create_notification
 from app.schemas.invitations import (
     AuditorInviteRequest,
     AuditorInviteResponse,
@@ -14,12 +15,15 @@ from app.schemas.invitations import (
     TeamInviteRequest,
     TeamMemberResponse,
     TeamListResponse,
+    ClientInvitationItem,
+    ClientInvitationsListResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["Invitations"])
 
 INVITES_DB_FILE = os.path.join(storage_service.uploads_dir, "invitations_db.json")
 ASSIGNED_AUDITORS_FILE = os.path.join(storage_service.uploads_dir, "assigned_auditors_db.json")
+ENGAGEMENTS_DB_FILE = os.path.join(storage_service.uploads_dir, "engagements_db.json")
 TEAM_DB_FILE = os.path.join(storage_service.uploads_dir, "team_members_db.json")
 
 def _load_json(filepath: str) -> Any:
@@ -67,27 +71,30 @@ def resolve_auditor_identity(auditor_input: str) -> Dict[str, str]:
             prefix = clean_id.replace("AUD-", "").lower()
             res = admin_client.table("profiles").select("id, email, display_name, role").ilike("id", f"{prefix}%").execute()
             if res.data and len(res.data) > 0:
-                p = res.data[0]
-                result["email"] = (p.get("email") or result["email"]).lower()
-                result["name"] = p.get("display_name") or ""
+                rows = cast(List[Dict[str, Any]], res.data)
+                p = rows[0]
+                result["email"] = str(p.get("email") or result["email"]).lower()
+                result["name"] = str(p.get("display_name") or "")
                 result["id"] = str(p.get("id"))
                 return result
 
         if len(val) == 36 and "-" in val:
             res = admin_client.table("profiles").select("id, email, display_name, role").eq("id", val).execute()
             if res.data and len(res.data) > 0:
-                p = res.data[0]
-                result["email"] = (p.get("email") or result["email"]).lower()
-                result["name"] = p.get("display_name") or ""
+                rows = cast(List[Dict[str, Any]], res.data)
+                p = rows[0]
+                result["email"] = str(p.get("email") or result["email"]).lower()
+                result["name"] = str(p.get("display_name") or "")
                 result["id"] = str(p.get("id"))
                 return result
 
         if "@" in val:
             res = admin_client.table("profiles").select("id, email, display_name, role").ilike("email", val).execute()
             if res.data and len(res.data) > 0:
-                p = res.data[0]
-                result["email"] = (p.get("email") or val).lower()
-                result["name"] = p.get("display_name") or ""
+                rows = cast(List[Dict[str, Any]], res.data)
+                p = rows[0]
+                result["email"] = str(p.get("email") or val).lower()
+                result["name"] = str(p.get("display_name") or "")
                 result["id"] = str(p.get("id"))
                 return result
     except Exception:
@@ -99,8 +106,9 @@ def resolve_auditor_identity(auditor_input: str) -> Dict[str, str]:
 @router.post("/business/auditor/invite", response_model=AuditorInviteResponse)
 def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] = Header(None)):
     """
-    Sends an engagement invitation to an auditor and establishes them as the
-    active assigned auditor for the company.
+    Sends an engagement invitation to an auditor.
+    Initially establishes the relationship with 'Pending Acceptance' status.
+    Once the auditor accepts, status transitions to 'Active'.
     Supports invitation by Email or Auditor User ID (AUD-XXXXXXXX).
     """
     # Resolve auditor by User ID or email
@@ -112,6 +120,7 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
 
     invite_id = f"inv_aud_{int(time.time() * 1000)}"
     now_str = datetime.now().strftime("%d %b %Y at %I:%M %p")
+    now_iso = datetime.now().isoformat()
 
     invite_record = {
         "id": invite_id,
@@ -120,7 +129,8 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
         "firm_name": actual_firm,
         "auditor_name": actual_name,
         "invite_type": "AUDITOR",
-        "status": "Invited",
+        "tax_year": "2025/26",
+        "status": "PENDING",
         "created_at": now_str,
     }
 
@@ -132,7 +142,7 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
         invites = [invite_record]
     _save_json(INVITES_DB_FILE, invites)
 
-    # 2. Update active assigned auditor mapping for this company
+    # 2. Update assigned auditor mapping with "Pending Acceptance"
     assigned_map = _load_json(ASSIGNED_AUDITORS_FILE)
     if not isinstance(assigned_map, dict):
         assigned_map = dict(DEFAULT_ASSIGNED)
@@ -142,12 +152,40 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
         "auditor_email": actual_email,
         "firm_name": actual_firm,
         "auditor_name": actual_name,
-        "status": "Active",
+        "status": "Pending Acceptance",
         "invited_at": now_str,
     }
     _save_json(ASSIGNED_AUDITORS_FILE, assigned_map)
 
-    # 3. Persist to Supabase invitations and auditor_engagements tables
+    # 3. Update engagements_db.json with PENDING status
+    engs = _load_json(ENGAGEMENTS_DB_FILE) or []
+    if not isinstance(engs, list):
+        engs = []
+    
+    eng_record = {
+        "id": f"eng_{int(time.time() * 1000)}",
+        "company_name": company,
+        "tax_year": "2025/26",
+        "auditor_email": actual_email,
+        "auditor_name": actual_name,
+        "auditor_firm": actual_firm,
+        "status": "PENDING",
+        "review_status": "AWAITING_ACCEPTANCE",
+        "appointed_date": now_iso,
+        "concluded_date": None,
+        "created_at": now_iso,
+    }
+    replaced = False
+    for idx, e in enumerate(engs):
+        if e.get("company_name", "").lower() == company.lower() and e.get("tax_year") == "2025/26":
+            engs[idx] = eng_record
+            replaced = True
+            break
+    if not replaced:
+        engs.insert(0, eng_record)
+    _save_json(ENGAGEMENTS_DB_FILE, engs)
+
+    # 4. Persist to Supabase invitations table
     admin_client = get_supabase_admin_client()
     if admin_client:
         try:
@@ -163,27 +201,21 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
         except Exception as e:
             print(f"[Supabase] Invitations table note: {e}")
 
-        try:
-            admin_client.table("auditor_engagements").upsert({
-                "id": f"eng_{int(time.time() * 1000)}",
-                "company_name": company,
-                "tax_year": "2025/26",
-                "auditor_email": actual_email,
-                "auditor_name": actual_name,
-                "auditor_firm": actual_firm,
-                "status": "ACTIVE",
-                "review_status": "PENDING",
-                "appointed_date": datetime.now().isoformat(),
-                "created_at": datetime.now().isoformat(),
-            }, on_conflict="company_name, tax_year").execute()
-        except Exception as e:
-            print(f"[Supabase] auditor_engagements sync note: {e}")
+    # 5. Trigger in-app notification to the Auditor
+    create_notification(
+        recipient_role="auditor",
+        company_name=company,
+        title="New Client Invitation",
+        message=f"{company} has invited you to be their statutory tax auditor for FY2025/26.",
+        notif_type="info",
+        link="/client-invitations",
+    )
 
     return AuditorInviteResponse(
         success=True,
-        message=f"Engagement invitation successfully dispatched to {actual_firm} ({actual_email})",
+        message=f"Engagement invitation successfully dispatched to {actual_firm} ({actual_email}). Awaiting auditor acceptance.",
         invitation_id=invite_id,
-        status="Active",
+        status="Pending Acceptance",
         assigned_auditor=assigned_map[company]
     )
 
@@ -191,28 +223,34 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
 def get_assigned_auditor(company_name: Optional[str] = None):
     """
     Retrieves the currently assigned / invited auditor for a given company.
-    Queries Supabase auditor_engagements first, falling back to local storage.
+    Accurately reflects 'Active' vs 'Pending Acceptance'.
     """
     target_company = company_name.strip() if company_name and company_name.strip() else ""
+    if not target_company:
+        return AssignedAuditorResponse(company_name="", has_assigned_auditor=False, auditor=None)
 
     admin_client = get_supabase_admin_client()
-    if admin_client and target_company:
+    if admin_client:
         try:
-            res = admin_client.table("auditor_engagements").select("*").eq("company_name", target_company).eq("status", "ACTIVE").order("created_at", desc=True).limit(1).execute()
+            res = admin_client.table("auditor_engagements").select("*").eq("company_name", target_company).order("created_at", desc=True).limit(1).execute()
             if res.data and len(res.data) > 0:
-                eng = res.data[0]
-                return AssignedAuditorResponse(
-                    company_name=target_company,
-                    has_assigned_auditor=True,
-                    auditor={
-                        "company_name": target_company,
-                        "auditor_email": eng.get("auditor_email"),
-                        "firm_name": eng.get("auditor_firm"),
-                        "auditor_name": eng.get("auditor_name"),
-                        "status": "Active",
-                        "invited_at": eng.get("appointed_date") or eng.get("created_at"),
-                    }
-                )
+                engs_data = cast(List[Dict[str, Any]], res.data)
+                eng = engs_data[0]
+                raw_st = str(eng.get("status") or "ACTIVE").upper()
+                if raw_st in ["ACTIVE", "PENDING"]:
+                    display_st = "Active" if raw_st == "ACTIVE" else "Pending Acceptance"
+                    return AssignedAuditorResponse(
+                        company_name=target_company,
+                        has_assigned_auditor=True,
+                        auditor={
+                            "company_name": target_company,
+                            "auditor_email": eng.get("auditor_email"),
+                            "firm_name": eng.get("auditor_firm"),
+                            "auditor_name": eng.get("auditor_name"),
+                            "status": display_st,
+                            "invited_at": eng.get("appointed_date") or eng.get("created_at"),
+                        }
+                    )
         except Exception:
             pass
 
@@ -222,17 +260,290 @@ def get_assigned_auditor(company_name: Optional[str] = None):
         assigned_map = DEFAULT_ASSIGNED
 
     if target_company in assigned_map:
-        return AssignedAuditorResponse(
-            company_name=target_company,
-            has_assigned_auditor=True,
-            auditor=assigned_map[target_company]
-        )
+        record = assigned_map[target_company]
+        cur_st = record.get("status", "")
+        if cur_st in ["Active", "Pending Acceptance"]:
+            return AssignedAuditorResponse(
+                company_name=target_company,
+                has_assigned_auditor=True,
+                auditor=record
+            )
 
     return AssignedAuditorResponse(
         company_name=target_company,
         has_assigned_auditor=False,
         auditor=None
     )
+
+# -----------------------------------------------------------------------------
+# AUDITOR INVITATION MANAGEMENT ENDPOINTS (Client Invitations Box & Accept/Decline)
+# -----------------------------------------------------------------------------
+
+@router.get("/auditor/invitations", response_model=ClientInvitationsListResponse)
+def get_auditor_invitations(
+    auditor_email: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Retrieves incoming client invitations for the auditor's 'Client Invitations' box.
+    """
+    target_email = auditor_email.strip().lower() if auditor_email else ""
+    if not target_email and authorization and authorization.startswith("Bearer "):
+        try:
+            token = authorization.split(" ")[1]
+            client = get_supabase_client()
+            u = client.auth.get_user(token)
+            if u and u.user and u.user.email:
+                target_email = str(u.user.email).strip().lower()
+        except Exception:
+            pass
+
+    invites: List[Dict[str, Any]] = []
+    admin_client = get_supabase_admin_client()
+    if admin_client:
+        try:
+            query = admin_client.table("invitations").select("*").eq("invite_type", "AUDITOR")
+            if target_email:
+                query = query.ilike("email", target_email)
+            res = query.order("created_at", desc=True).execute()
+            if res.data:
+                invites = cast(List[Dict[str, Any]], res.data)
+        except Exception as e:
+            print(f"[Invitations] Supabase query note: {e}")
+
+    if not invites:
+        all_local = _load_json(INVITES_DB_FILE) or []
+        if isinstance(all_local, list):
+            if target_email:
+                invites = [i for i in all_local if i.get("invite_type") == "AUDITOR" and (i.get("email") or "").lower() == target_email]
+            else:
+                invites = [i for i in all_local if i.get("invite_type") == "AUDITOR"]
+
+    items: List[ClientInvitationItem] = []
+    for inv in invites:
+        st = str(inv.get("status") or "PENDING").upper()
+        if st in ["INVITED"]:
+            st = "PENDING"
+        items.append(ClientInvitationItem(
+            id=str(inv.get("id")),
+            company_name=str(inv.get("company_name") or "Corporate Client"),
+            email=str(inv.get("email") or ""),
+            firm_name=inv.get("firm_name") or "Audit Firm",
+            auditor_name=inv.get("auditor_name") or inv.get("name") or "Auditor",
+            tax_year=inv.get("tax_year") or "2025/26",
+            status=st,
+            created_at=str(inv.get("created_at") or "Recently")
+        ))
+
+    pending_count = sum(1 for item in items if item.status == "PENDING")
+    return ClientInvitationsListResponse(
+        invitations=items,
+        total_count=len(items),
+        pending_count=pending_count
+    )
+
+@router.post("/auditor/invitations/{invitation_id}/accept")
+def accept_auditor_invitation(invitation_id: str, authorization: Optional[str] = Header(None)):
+    """
+    Auditor accepts an incoming client engagement invitation.
+    Transitions status to ACCEPTED and activates the engagement.
+    Updates the business-side auditor tile to 'Active' and notifies the client.
+    """
+    now_str = datetime.now().strftime("%d %b %Y at %I:%M %p")
+    now_iso = datetime.now().isoformat()
+
+    # 1. Update invitations_db.json
+    invites = _load_json(INVITES_DB_FILE) or []
+    target_invite: Optional[Dict[str, Any]] = None
+    if isinstance(invites, list):
+        for inv in invites:
+            if isinstance(inv, dict) and str(inv.get("id")) == str(invitation_id):
+                inv["status"] = "ACCEPTED"
+                target_invite = cast(Dict[str, Any], inv)
+                break
+        _save_json(INVITES_DB_FILE, invites)
+
+    company: str = str(target_invite.get("company_name") or "") if target_invite else ""
+    auditor_email: str = str(target_invite.get("email") or "") if target_invite else ""
+    auditor_name: str = str(target_invite.get("auditor_name") or target_invite.get("name") or "Mr. A. Karunaratne (FCA)") if target_invite else "Mr. A. Karunaratne (FCA)"
+    firm_name: str = str(target_invite.get("firm_name") or "Karunaratne & Associates") if target_invite else "Karunaratne & Associates"
+
+    # 2. Update Supabase invitations
+    admin_client = get_supabase_admin_client()
+    if admin_client:
+        try:
+            admin_client.table("invitations").update({"status": "ACCEPTED"}).eq("id", invitation_id).execute()
+            if not company:
+                f_res = admin_client.table("invitations").select("*").eq("id", invitation_id).execute()
+                if f_res.data and len(f_res.data) > 0:
+                    f_rows = cast(List[Dict[str, Any]], f_res.data)
+                    row = f_rows[0]
+                    company = str(row.get("company_name") or company)
+                    auditor_email = str(row.get("email") or auditor_email)
+                    auditor_name = str(row.get("name") or auditor_name)
+                    firm_name = str(row.get("firm_name") or firm_name)
+        except Exception as e:
+            print(f"[Invitations] Supabase accept note: {e}")
+
+    if not company and isinstance(invites, list) and len(invites) > 0:
+        first_inv = cast(Dict[str, Any], invites[0])
+        company = str(first_inv.get("company_name", ""))
+        auditor_email = str(first_inv.get("email", ""))
+        auditor_name = str(first_inv.get("auditor_name") or "Auditor")
+        firm_name = str(first_inv.get("firm_name") or "Audit Practice")
+
+    if not company:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+
+    # 3. Update assigned_auditors_db.json to 'Active'
+    assigned_map = cast(Dict[str, Any], _load_json(ASSIGNED_AUDITORS_FILE) or {})
+    if not isinstance(assigned_map, dict):
+        assigned_map = {}
+
+    assigned_map[company] = {
+        "company_name": company,
+        "auditor_email": auditor_email,
+        "firm_name": firm_name,
+        "auditor_name": auditor_name,
+        "status": "Active",
+        "invited_at": now_str,
+        "appointed_at": now_str,
+    }
+    _save_json(ASSIGNED_AUDITORS_FILE, assigned_map)
+
+    # 4. Update engagements_db.json to 'ACTIVE'
+    raw_engs = _load_json(ENGAGEMENTS_DB_FILE) or []
+    engs_list: List[Dict[str, Any]] = cast(List[Dict[str, Any]], raw_engs) if isinstance(raw_engs, list) else []
+
+    existing_eng: Optional[Dict[str, Any]] = None
+    for e in engs_list:
+        if str(e.get("company_name", "")).lower() == company.lower() and str(e.get("tax_year", "")) == "2025/26":
+            e["status"] = "ACTIVE"
+            e["review_status"] = "PENDING"
+            e["appointed_date"] = now_iso
+            existing_eng = e
+            break
+
+    if not existing_eng:
+        existing_eng = {
+            "id": f"eng_{int(time.time() * 1000)}",
+            "company_name": company,
+            "tax_year": "2025/26",
+            "auditor_email": auditor_email,
+            "auditor_name": auditor_name,
+            "auditor_firm": firm_name,
+            "status": "ACTIVE",
+            "review_status": "PENDING",
+            "appointed_date": now_iso,
+            "concluded_date": None,
+            "created_at": now_iso,
+        }
+        engs_list.insert(0, existing_eng)
+    _save_json(ENGAGEMENTS_DB_FILE, engs_list)
+
+    # 5. Persist to Supabase auditor_engagements table
+    if admin_client:
+        try:
+            admin_client.table("auditor_engagements").upsert({
+                "id": existing_eng.get("id") or f"eng_{int(time.time() * 1000)}",
+                "company_name": company,
+                "tax_year": "2025/26",
+                "auditor_email": auditor_email,
+                "auditor_name": auditor_name,
+                "auditor_firm": firm_name,
+                "status": "ACTIVE",
+                "review_status": "PENDING",
+                "appointed_date": now_iso,
+                "created_at": now_iso,
+            }, on_conflict="id").execute()
+        except Exception as e:
+            print(f"[Invitations] Supabase engagement upsert note: {e}")
+
+    # 6. Notify Business Client in real time
+    create_notification(
+        recipient_role="business",
+        company_name=company,
+        title="Auditor Accepted Engagement",
+        message=f"{auditor_name} ({firm_name}) has accepted your statutory tax audit appointment for FY2025/26.",
+        notif_type="success",
+        link="/auditor-review",
+    )
+
+    return {
+        "success": True,
+        "message": f"Successfully accepted engagement for {company}. You now have full audit access.",
+        "status": "Active",
+        "invitation_id": invitation_id,
+        "assigned_auditor": assigned_map[company]
+    }
+
+@router.post("/auditor/invitations/{invitation_id}/decline")
+def decline_auditor_invitation(invitation_id: str, authorization: Optional[str] = Header(None)):
+    """
+    Auditor declines an incoming client engagement invitation.
+    Transitions status to DECLINED and frees the 1-auditor lock for the business.
+    """
+    invites = _load_json(INVITES_DB_FILE) or []
+    target_invite: Optional[Dict[str, Any]] = None
+    if isinstance(invites, list):
+        for inv in invites:
+            if isinstance(inv, dict) and str(inv.get("id")) == str(invitation_id):
+                inv["status"] = "DECLINED"
+                target_invite = cast(Dict[str, Any], inv)
+                break
+        _save_json(INVITES_DB_FILE, invites)
+
+    company: str = str(target_invite.get("company_name") or "") if target_invite else ""
+    auditor_name: str = str(target_invite.get("auditor_name") or target_invite.get("name") or "The invited auditor") if target_invite else "The invited auditor"
+
+    admin_client = get_supabase_admin_client()
+    if admin_client:
+        try:
+            admin_client.table("invitations").update({"status": "REVOKED"}).eq("id", invitation_id).execute()
+            if not company:
+                f_res = admin_client.table("invitations").select("*").eq("id", invitation_id).execute()
+                if f_res.data and len(f_res.data) > 0:
+                    f_rows = cast(List[Dict[str, Any]], f_res.data)
+                    company = str(f_rows[0].get("company_name") or company)
+        except Exception as e:
+            print(f"[Invitations] Supabase decline note: {e}")
+
+    if not company and isinstance(invites, list) and len(invites) > 0:
+        first_inv = cast(Dict[str, Any], invites[0])
+        company = str(first_inv.get("company_name", ""))
+
+    if company:
+        # Free assigned auditor status
+        assigned_map = cast(Dict[str, Any], _load_json(ASSIGNED_AUDITORS_FILE) or {})
+        if isinstance(assigned_map, dict) and company in assigned_map:
+            assigned_map[company]["status"] = "Declined"
+            _save_json(ASSIGNED_AUDITORS_FILE, assigned_map)
+
+        # Terminate engagement
+        raw_engs = _load_json(ENGAGEMENTS_DB_FILE) or []
+        engs_list: List[Dict[str, Any]] = cast(List[Dict[str, Any]], raw_engs) if isinstance(raw_engs, list) else []
+        for e in engs_list:
+            if str(e.get("company_name", "")).lower() == company.lower():
+                e["status"] = "TERMINATED"
+        _save_json(ENGAGEMENTS_DB_FILE, engs_list)
+
+        # Notify business
+        create_notification(
+            recipient_role="business",
+            company_name=company,
+            title="Auditor Declined Engagement",
+            message=f"{auditor_name} was unable to accept the statutory audit appointment for FY2025/26.",
+            notif_type="warning",
+            link="/auditor-review",
+        )
+
+    return {
+        "success": True,
+        "message": "Engagement invitation declined.",
+        "status": "Declined",
+        "invitation_id": invitation_id
+    }
+
 
 @router.post("/business/team/invite", response_model=TeamMemberResponse)
 def invite_team_member(request: TeamInviteRequest):

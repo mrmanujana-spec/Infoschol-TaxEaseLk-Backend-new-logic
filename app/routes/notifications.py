@@ -27,6 +27,55 @@ def _save_notifications(notifications: List[Dict[str, Any]]):
     with open(LOCAL_NOTIFICATIONS_PATH, "w", encoding="utf-8") as f:
         json.dump(notifications, f, indent=2, ensure_ascii=False)
 
+def create_notification(
+    recipient_role: str,
+    title: str,
+    message: str,
+    notif_type: str = "info",
+    company_name: Optional[str] = None,
+    link: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    notif_id = f"notif_{int(time.time() * 1000)}"
+    now_str = "Just now"
+    now_iso = datetime.now().isoformat()
+
+    new_item = {
+        "id": notif_id,
+        "recipient_role": recipient_role.lower(),
+        "company_name": company_name,
+        "user_id": user_id,
+        "title": title,
+        "message": message,
+        "type": notif_type,
+        "link": link or ("/auditor-review" if recipient_role.lower() == "business" else "/client-invitations"),
+        "is_read": False,
+        "created_at": now_str,
+    }
+
+    # 1. Supabase
+    try:
+        client = get_supabase_admin_client()
+        client.table("notifications").insert({
+            "id": notif_id,
+            "recipient_role": recipient_role.lower(),
+            "company_name": company_name,
+            "title": title,
+            "message": message,
+            "type": notif_type,
+            "link": new_item["link"],
+            "is_read": False,
+            "created_at": now_iso,
+        }).execute()
+    except Exception:
+        pass
+
+    # 2. Local fallback
+    local_notifs = _load_notifications()
+    local_notifs.insert(0, new_item)
+    _save_notifications(local_notifs)
+    return new_item
+
 DEFAULT_NOTIFICATIONS = []
 
 

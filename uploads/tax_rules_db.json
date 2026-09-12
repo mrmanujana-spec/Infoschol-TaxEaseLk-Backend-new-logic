@@ -1,0 +1,44 @@
+[
+  {
+    "tax_year": "2024/25",
+    "standard_cit_rate": 0.3,
+    "sin_tax_rate": 0.4,
+    "concession_rate": 0.15,
+    "capital_allowance_rates": {
+      "computers_software": 0.2,
+      "plant_machinery": 0.2,
+      "commercial_buildings": 0.05
+    },
+    "entertainment_disallowable_pct": 1.0,
+    "gazette_reference": "Inland Revenue (Amendment) Act No. 45 of 2022",
+    "notes": "Unified standard corporate tax rate 30%"
+  },
+  {
+    "tax_year": "2025/26",
+    "standard_cit_rate": 0.3,
+    "sin_tax_rate": 0.4,
+    "concession_rate": 0.15,
+    "capital_allowance_rates": {
+      "computers_software": 0.2,
+      "plant_machinery": 0.2,
+      "commercial_buildings": 0.05
+    },
+    "entertainment_disallowable_pct": 1.0,
+    "gazette_reference": "Inland Revenue Act No. 24 of 2017 as amended",
+    "notes": "Current statutory assessment year"
+  },
+  {
+    "tax_year": "2026/27",
+    "standard_cit_rate": 0.3,
+    "sin_tax_rate": 0.4,
+    "concession_rate": 0.15,
+    "capital_allowance_rates": {
+      "computers_software": 0.2,
+      "plant_machinery": 0.2,
+      "commercial_buildings": 0.05
+    },
+    "entertainment_disallowable_pct": 1.0,
+    "gazette_reference": "Subject to upcoming National Budget Gazette",
+    "notes": "Provisional rate setting"
+  }
+]

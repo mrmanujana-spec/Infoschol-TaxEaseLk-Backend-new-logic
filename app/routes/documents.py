@@ -176,9 +176,10 @@ def get_documents_summary(
     user_email = user_info.get("email", "").lower().strip()
     user_company = user_info.get("company_name", "").strip()
     role = user_info.get("role", "").lower().strip()
+    effective_company = (company_name or user_company).strip()
 
-    # Strict check: If neither user_id nor email could be verified, no documents are returned
-    if not user_id and not user_email:
+    # Check: If neither identity nor company could be verified, no documents are returned
+    if not user_id and not user_email and not effective_company:
         return DocumentsSummaryResponse(
             uploaded_count=0,
             processed_count=0,
@@ -191,7 +192,7 @@ def get_documents_summary(
     admin_client = get_supabase_admin_client()
     docs = []
 
-    # 1. Supabase Query with strict scoping
+    # 1. Supabase Query with scoping
     try:
         if is_auditor:
             # Auditor access: Find all companies assigned to this auditor
@@ -224,20 +225,20 @@ def get_documents_summary(
                     if res.data:
                         docs = res.data
         else:
-            # Business User access: strictly isolated to the user's own identity
-            if admin_client and user_id:
-                res = admin_client.table("documents").select("*").eq("user_id", user_id).order("uploaded_at", desc=True).execute()
-                if res.data and len(res.data) > 0:
-                    docs = res.data
-                elif user_company:
-                    # Fallback for documents uploaded before user_id column assignment
-                    res2 = admin_client.table("documents").select("*").ilike("company_name", user_company).order("uploaded_at", desc=True).execute()
+            # Business User access: query by user_id or effective company name
+            if admin_client:
+                if user_id:
+                    res = admin_client.table("documents").select("*").eq("user_id", user_id).order("uploaded_at", desc=True).execute()
+                    if res.data and len(res.data) > 0:
+                        docs = res.data
+                if not docs and effective_company:
+                    res2 = admin_client.table("documents").select("*").ilike("company_name", effective_company).order("uploaded_at", desc=True).execute()
                     if res2.data:
                         docs = res2.data
     except Exception as e:
         print(f"[Documents] Query note: {e}")
 
-    # 2. Local DB Fallback with identical isolation guarantees
+    # 2. Local DB Fallback with identical guarantees
     if not docs:
         local_docs = _load_local_db()
         if is_auditor:
@@ -248,7 +249,7 @@ def get_documents_summary(
             docs = [
                 d for d in local_docs
                 if (user_id and d.get("user_id") == user_id) or
-                   (user_company and (d.get("company_name") or "").lower() == user_company.lower())
+                   (effective_company and (d.get("company_name") or "").lower() == effective_company.lower())
             ]
 
     uploaded_count = len(docs)
@@ -983,9 +984,68 @@ def get_dashboard(authorization: Optional[str] = Header(None)):
     taxable_income = extracted_profit
     estimated_cit_liability = int(taxable_income * standard_cit_rate)
 
+    # Construct dynamic Attention Items based on live filing state
+    attention_items = []
+
+    # 1. Missing Statutory Files
+    missing_docs = []
+    required_map = {
+        "financial": "Financial Statements",
+        "trial": "Trial Balance",
+        "ledger": "General Ledger",
+        "asset": "Fixed Assets Schedule",
+        "cit": "Previous CIT Return"
+    }
+    for rk, rname in required_map.items():
+        if not any(rk in (d.get("type", "") + d.get("name", "") + d.get("doc_type", "")).lower() for d in docs):
+            missing_docs.append(rname)
+
+    if missing_docs:
+        attention_items.append({
+            "id": "att_missing_docs",
+            "type": "critical" if len(missing_docs) >= 3 else "warning",
+            "severity": "critical" if len(missing_docs) >= 3 else "warning",
+            "title": f"{len(missing_docs)} Statutory Document(s) Missing",
+            "description": f"Missing: {', '.join(missing_docs[:2])}{' and others' if len(missing_docs) > 2 else ''}. Upload to enable automated CIT extraction.",
+            "link": "/documents"
+        })
+
+    # 2. AI OCR Review Required
+    review_docs = [d for d in docs if "review" in str(d.get("status", "")).lower()]
+    if review_docs:
+        attention_items.append({
+            "id": "att_ocr_review",
+            "type": "warning",
+            "severity": "warning",
+            "title": f"{len(review_docs)} Document(s) Require AI Review",
+            "description": f"AI extraction flagged '{review_docs[0].get('name')}' for review. Check low-confidence values.",
+            "link": "/documents"
+        })
+
+    # 3. Auditor Engagement Status
+    if not company_status or company_status in ["waiting", "none"]:
+        attention_items.append({
+            "id": "att_auditor",
+            "type": "warning",
+            "severity": "warning",
+            "title": "No Statutory Auditor Appointed",
+            "description": "Appoint an external auditor or firm in Auditor Review to certify your statutory CIT return.",
+            "link": "/auditor-review"
+        })
+    elif company_status_norm == "waiting_for_company":
+        attention_items.append({
+            "id": "att_auditor_queries",
+            "type": "critical",
+            "severity": "critical",
+            "title": "Action Required: Auditor Inquiries Pending",
+            "description": "Your appointed auditor has raised queries regarding your tax computations. Respond in Discussions.",
+            "link": "/auditor-review"
+        })
+
     return {
         "progress_percent": composite_pct,
         "updated_at": datetime.now().strftime("%d %b %Y at %I:%M %p"),
+        "attention_items": attention_items,
         "steps": {
             "document_gathering": {
                 "percent": s1_pct,
@@ -1077,28 +1137,29 @@ def _save_reviews_db(revs: List[Dict[str, Any]]):
 @router.get("/auditor-engagement/{company_name}")
 def get_auditor_engagement(company_name: str, tax_year: str = "2025/26"):
     """
-    Retrieve the active auditor engagement for a given business and tax year.
-    Enforces the rule that a business may only have ONE active auditor.
+    Retrieve the active or pending auditor engagement for a given business and tax year.
+    Enforces the rule that a business may only have ONE active/pending auditor.
     """
     client = get_supabase_admin_client()
     if client:
         try:
-            res = client.table("auditor_engagements").select("*").eq("company_name", company_name).eq("tax_year", tax_year).eq("status", "ACTIVE").order("created_at", desc=True).limit(1).execute()
+            res = client.table("auditor_engagements").select("*").eq("company_name", company_name).eq("tax_year", tax_year).in_("status", ["ACTIVE", "PENDING"]).order("created_at", desc=True).limit(1).execute()
             if res.data and len(res.data) > 0:
-                return {"success": True, "has_active_auditor": True, "engagement": res.data[0]}
+                eng_data = cast(List[Dict[str, Any]], res.data)
+                return {"success": True, "has_active_auditor": True, "engagement": eng_data[0]}
         except Exception as e:
             print(f"[Engagements] Supabase query error: {e}")
 
     # Fallback to local DB
-    engs = _load_engagements_db()
-    active_matches = [
+    engs = cast(List[Dict[str, Any]], _load_engagements_db())
+    matches = [
         e for e in engs
-        if e.get("company_name", "").lower() == company_name.lower()
-        and e.get("tax_year") == tax_year
-        and e.get("status") == "ACTIVE"
+        if str(e.get("company_name", "")).lower() == company_name.lower()
+        and str(e.get("tax_year", "")) == tax_year
+        and str(e.get("status", "")).upper() in ["ACTIVE", "PENDING"]
     ]
-    if active_matches:
-        return {"success": True, "has_active_auditor": True, "engagement": active_matches[0]}
+    if matches:
+        return {"success": True, "has_active_auditor": True, "engagement": matches[0]}
 
     return {"success": True, "has_active_auditor": False, "engagement": None}
 

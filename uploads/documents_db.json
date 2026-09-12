@@ -1,1 +1,47 @@
-[]
+[
+  {
+    "id": "doc_1789192689124",
+    "name": "Thimna-Dewmi-CV.pdf",
+    "type": "Financial Statements",
+    "status": "processed",
+    "ai_confidence_percent": 99,
+    "uploaded_date": "12 Sep 2026",
+    "size_label": "2.2 KB",
+    "file_path": "uploads/Mr.Companies/2025-26/Thimna-Dewmi-CV.pdf",
+    "view_link": "https://drive.google.com/file/d/gdrive_Thimna-Dewmi-CV.pdf/view",
+    "download_url": "/api/documents/download/Thimna-Dewmi-CV.pdf",
+    "extracted_data": {
+      "document_name": "Thimna-Dewmi-CV.pdf",
+      "detected_type": "Financial Statements",
+      "file_size_bytes": 2229,
+      "review_reasons": [],
+      "accounting_profit_before_tax": 24500000.0,
+      "revenue": 128500000.0,
+      "depreciation_expense": 4250000.0,
+      "entertainment_expense": 840000.0,
+      "advertising_expense": 2100000.0
+    },
+    "user_id": "",
+    "company_name": "Mr.Companies"
+  },
+  {
+    "id": "doc_1789192559434",
+    "name": "Tax ease lk version.pdf",
+    "type": "Previous CIT",
+    "status": "processed",
+    "ai_confidence_percent": 99,
+    "uploaded_date": "12 Sep 2026",
+    "size_label": "4.0 MB",
+    "file_path": "uploads/MR companies/2025-26/Tax ease lk version.pdf",
+    "view_link": "https://drive.google.com/file/d/gdrive_Tax ease lk version.pdf/view",
+    "download_url": "/api/documents/download/Tax ease lk version.pdf",
+    "extracted_data": {
+      "document_name": "Tax ease lk version.pdf",
+      "detected_type": "Previous CIT",
+      "file_size_bytes": 4160374,
+      "review_reasons": []
+    },
+    "user_id": "",
+    "company_name": "MR companies"
+  }
+]

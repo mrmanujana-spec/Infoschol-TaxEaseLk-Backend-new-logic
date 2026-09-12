@@ -1,0 +1,45 @@
+{
+  "default": {
+    "profile": {
+      "fullName": "Chartered Accountant",
+      "email": "mrmanujana@gmail.com",
+      "phone": "",
+      "licenseNumber": "",
+      "organization": "Audit Firm",
+      "designation": "Audit Partner",
+      "caSriLankaNo": "",
+      "irdPractitionerNo": "",
+      "firmRegNo": "",
+      "firmAddress": "Colombo, Sri Lanka",
+      "signatureStampUrl": ""
+    },
+    "team": [],
+    "preferences": {
+      "defaultTaxYear": "2025/26 (Apr 1 - Mar 31)",
+      "accountingStandard": "SLFRS / LKAS for SMEs",
+      "materialityThresholdPercent": 5.0,
+      "autoRemindDaysBeforeDeadline": [
+        14,
+        7,
+        3
+      ],
+      "autoRequestStandardPackOnConnect": true,
+      "strictVatReconciliation": true
+    },
+    "notifications": {
+      "clientDocumentUploaded": true,
+      "clientResponseReceived": true,
+      "discussionMessageReceived": true,
+      "deadlineApproaching": true,
+      "clientInvitationReceived": true,
+      "digestFrequency": "instant"
+    },
+    "security": {
+      "twoFactorEnabled": false,
+      "sessionTimeoutMinutes": 60,
+      "ipWhitelistEnabled": false,
+      "immutableAuditTrail": true,
+      "activeSessions": []
+    }
+  }
+}
