@@ -1,87 +1,24 @@
 [
   {
-    "id": "doc_1789201926338",
-    "name": "Scan in Progress _ ScanTower.pdf",
-    "type": "PDF Document",
-    "status": "processed",
-    "ai_confidence_percent": 99,
-    "uploaded_date": "12 Sep 2026",
-    "size_label": "1.1 MB",
-    "file_path": "uploads/ABC _Pvt_ Ltd/2025-26/Scan in Progress _ ScanTower.pdf",
-    "view_link": "https://drive.google.com/file/d/gdrive_Scan in Progress _ ScanTower.pdf/view",
-    "download_url": "/api/documents/download/Scan in Progress _ ScanTower.pdf",
-    "extracted_data": {
-      "document_name": "Scan in Progress _ ScanTower.pdf",
-      "detected_type": "PDF Document",
-      "file_size_bytes": 1126521,
-      "review_reasons": []
-    },
-    "user_id": "",
-    "company_name": "ABC (Pvt) Ltd"
-  },
-  {
-    "id": "doc_1789201863347",
-    "name": "Scan in Progress _ ScanTower.pdf",
-    "type": "PDF Document",
-    "status": "processed",
-    "ai_confidence_percent": 99,
-    "uploaded_date": "12 Sep 2026",
-    "size_label": "1.1 MB",
-    "file_path": "uploads/ABC _Pvt_ Ltd/2025-26/Scan in Progress _ ScanTower.pdf",
-    "view_link": "https://drive.google.com/file/d/gdrive_Scan in Progress _ ScanTower.pdf/view",
-    "download_url": "/api/documents/download/Scan in Progress _ ScanTower.pdf",
-    "extracted_data": {
-      "document_name": "Scan in Progress _ ScanTower.pdf",
-      "detected_type": "PDF Document",
-      "file_size_bytes": 1126521,
-      "review_reasons": []
-    },
-    "user_id": "",
-    "company_name": "ABC (Pvt) Ltd"
-  },
-  {
-    "id": "doc_1789192689124",
-    "name": "Thimna-Dewmi-CV.pdf",
+    "id": "doc_1789209336592",
+    "name": "test_invoice.pdf",
     "type": "Financial Statements",
-    "status": "processed",
-    "ai_confidence_percent": 99,
+    "status": "review_required",
+    "ai_confidence_percent": 65,
     "uploaded_date": "12 Sep 2026",
-    "size_label": "2.2 KB",
-    "file_path": "uploads/Mr.Companies/2025-26/Thimna-Dewmi-CV.pdf",
-    "view_link": "https://drive.google.com/file/d/gdrive_Thimna-Dewmi-CV.pdf/view",
-    "download_url": "/api/documents/download/Thimna-Dewmi-CV.pdf",
+    "size_label": "33 B",
+    "file_path": "Test Enterprise/2025-26/test_invoice.pdf",
+    "view_link": "https://emhekcwbsirurmbhesck.supabase.co/storage/v1/object/public/tax-documents/Test%20Enterprise/2025-26/test_invoice.pdf",
+    "download_url": "https://emhekcwbsirurmbhesck.supabase.co/storage/v1/object/public/tax-documents/Test%20Enterprise/2025-26/test_invoice.pdf",
     "extracted_data": {
-      "document_name": "Thimna-Dewmi-CV.pdf",
+      "document_name": "test_invoice.pdf",
       "detected_type": "Financial Statements",
-      "file_size_bytes": 2229,
-      "review_reasons": [],
-      "accounting_profit_before_tax": 24500000.0,
-      "revenue": 128500000.0,
-      "depreciation_expense": 4250000.0,
-      "entertainment_expense": 840000.0,
-      "advertising_expense": 2100000.0
+      "file_size_bytes": 33,
+      "review_reasons": [
+        "File size appears unusually small (< 100 bytes)"
+      ]
     },
     "user_id": "",
-    "company_name": "Mr.Companies"
-  },
-  {
-    "id": "doc_1789192559434",
-    "name": "Tax ease lk version.pdf",
-    "type": "Previous CIT",
-    "status": "processed",
-    "ai_confidence_percent": 99,
-    "uploaded_date": "12 Sep 2026",
-    "size_label": "4.0 MB",
-    "file_path": "uploads/MR companies/2025-26/Tax ease lk version.pdf",
-    "view_link": "https://drive.google.com/file/d/gdrive_Tax ease lk version.pdf/view",
-    "download_url": "/api/documents/download/Tax ease lk version.pdf",
-    "extracted_data": {
-      "document_name": "Tax ease lk version.pdf",
-      "detected_type": "Previous CIT",
-      "file_size_bytes": 4160374,
-      "review_reasons": []
-    },
-    "user_id": "",
-    "company_name": "MR companies"
+    "company_name": "Test Enterprise"
   }
 ]

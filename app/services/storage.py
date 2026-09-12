@@ -1,14 +1,13 @@
 import os
 import io
 import re
-import shutil
 import zipfile
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
 @dataclass
 class StorageResult:
-    provider: str  # "gdrive" or "local"
+    provider: str  # "supabase" or "local"
     file_id: str
     file_path: str
     view_link: str
@@ -21,61 +20,20 @@ class StorageService:
         self.uploads_dir = os.path.join(self.base_dir, "uploads")
         os.makedirs(self.uploads_dir, exist_ok=True)
         
-        # Check for Google Drive Service Account key
-        self.credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or os.path.join(self.base_dir, "service_account.json")
-        self.gdrive_enabled = False
-        self.drive_service = None
-        self._init_gdrive()
-
-    def _init_gdrive(self):
-        """Initializes Google Drive API client if service_account.json is present."""
-        if os.path.exists(self.credentials_path):
-            try:
-                from google.oauth2 import service_account
-                from googleapiclient.discovery import build
-
-                scopes = ["https://www.googleapis.com/auth/drive"]
-                creds = service_account.Credentials.from_service_account_file(
-                    self.credentials_path, scopes=scopes
-                )
-                self.drive_service = build("drive", "v3", credentials=creds)
-                self.gdrive_enabled = True
-                print(f"[StorageService] Google Drive API connected successfully using {self.credentials_path}")
-            except Exception as e:
-                print(f"[StorageService] Failed to initialize Google Drive: {e}. Falling back to Local Vault.")
-                self.gdrive_enabled = False
-        else:
-            self.gdrive_enabled = False
-            print("[StorageService] Running in Local Vault Mode. Drop service_account.json into backend folder to activate Google Drive.")
+        # Supabase Storage Bucket configuration (default: tax-documents)
+        self.bucket_name = os.environ.get("SUPABASE_STORAGE_BUCKET", "tax-documents")
+        print(f"[StorageService] Primary storage target: Supabase Storage bucket '{self.bucket_name}'")
 
     def _sanitize(self, name: str) -> str:
         return re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', name).strip()
 
-    # --- Google Drive Helpers ---
-
-    def _gdrive_find_or_create_folder(self, folder_name: str, parent_id: Optional[str] = None) -> str:
-        if not self.gdrive_enabled or not self.drive_service:
-            return ""
-        
-        q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        if parent_id:
-            q += f" and '{parent_id}' in parents"
-        
-        results = self.drive_service.files().list(q=q, spaces='drive', fields='files(id, name)').execute()
-        files = results.get('files', [])
-        if files:
-            return files[0]['id']
-        
-        # Create folder
-        metadata: Dict[str, Any] = {
-            'name': folder_name,
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
-        if parent_id:
-            metadata['parents'] = [parent_id]
-        
-        folder = self.drive_service.files().create(body=metadata, fields='id').execute()
-        return folder.get('id')
+    def _get_admin_client(self):
+        try:
+            from app.database import get_supabase_admin_client
+            return get_supabase_admin_client()
+        except Exception as e:
+            print(f"[StorageService] Failed to load Supabase admin client: {e}")
+            return None
 
     # --- Public Storage Operations ---
 
@@ -92,44 +50,31 @@ class StorageService:
         clean_tax_year = self._sanitize(tax_year.replace("/", "-"))
         clean_filename = self._sanitize(filename)
 
-        # 1. Try Google Drive Upload if available
-        if self.gdrive_enabled and self.drive_service:
+        # 1. Primary: Supabase Storage Bucket
+        admin_client = self._get_admin_client()
+        if admin_client:
             try:
-                from googleapiclient.http import MediaIoBaseUpload
+                storage_path = f"{clean_company}/{clean_tax_year}/{clean_filename}"
+                admin_client.storage.from_(self.bucket_name).upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options={"content-type": content_type, "upsert": "true"}
+                )
+                public_url = admin_client.storage.from_(self.bucket_name).get_public_url(storage_path)
 
-                # Structure: TaxEaseLK_Documents / {company_name} / Y-A {tax_year}
-                root_id = self._gdrive_find_or_create_folder("TaxEaseLK_Documents")
-                company_folder_id = self._gdrive_find_or_create_folder(clean_company, parent_id=root_id)
-                tax_year_folder_id = self._gdrive_find_or_create_folder(f"Y-A {clean_tax_year}", parent_id=company_folder_id)
-
-                file_metadata = {
-                    'name': clean_filename,
-                    'parents': [tax_year_folder_id],
-                    'description': f"TaxEaseLK upload: {doc_type} for {company_name} ({tax_year})"
-                }
-                media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=content_type, resumable=True)
-                created_file = self.drive_service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id, name, webViewLink, webContentLink'
-                ).execute()
-
-                file_id = created_file.get('id')
-                view_link = created_file.get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
-                download_url = created_file.get('webContentLink', view_link)
-
+                print(f"[StorageService] Successfully uploaded to Supabase Storage: {storage_path}")
                 return StorageResult(
-                    provider="gdrive",
-                    file_id=file_id,
-                    file_path=file_id,
-                    view_link=view_link,
-                    download_url=download_url,
+                    provider="supabase",
+                    file_id=storage_path,
+                    file_path=storage_path,
+                    view_link=public_url,
+                    download_url=public_url,
                     size=len(file_bytes)
                 )
             except Exception as e:
-                print(f"[StorageService] Google Drive upload failed: {e}. Falling back to local vault.")
+                print(f"[StorageService] Supabase Storage upload failed: {e}. Falling back to local vault.")
 
-        # 2. Local Vault Upload (Primary when key not provided, or fallback)
+        # 2. Fallback: Local Vault Upload
         company_vault_dir = os.path.join(self.uploads_dir, clean_company, clean_tax_year)
         os.makedirs(company_vault_dir, exist_ok=True)
 
@@ -139,34 +84,72 @@ class StorageService:
 
         rel_path = os.path.relpath(target_file_path, self.base_dir).replace("\\", "/")
         download_url = f"/api/documents/download/{clean_filename}"
-        simulated_gdrive_link = f"https://drive.google.com/file/d/gdrive_{clean_filename}/view"
 
         return StorageResult(
             provider="local",
             file_id=f"local_{clean_filename}",
             file_path=rel_path,
-            view_link=simulated_gdrive_link,
+            view_link=download_url,
             download_url=download_url,
             size=len(file_bytes)
         )
 
-    def delete_file(self, file_path_or_id: str) -> bool:
-        if self.gdrive_enabled and self.drive_service and not file_path_or_id.startswith("uploads/"):
-            try:
-                self.drive_service.files().delete(fileId=file_path_or_id).execute()
-                return True
-            except Exception as e:
-                print(f"[StorageService] Failed to delete GDrive file {file_path_or_id}: {e}")
+    def download_file_bytes(self, file_path_or_id: str) -> Optional[bytes]:
+        """
+        Retrieves raw bytes of a file from Supabase Storage or local disk.
+        """
+        if not file_path_or_id:
+            return None
 
-        # Local deletion
+        # 1. Try Supabase Storage
+        admin_client = self._get_admin_client()
+        if admin_client and not file_path_or_id.startswith("uploads/"):
+            try:
+                data = admin_client.storage.from_(self.bucket_name).download(file_path_or_id)
+                if data:
+                    return data
+            except Exception:
+                pass
+
+        # 2. Try local disk
+        clean_path = file_path_or_id.replace("/", os.sep)
+        full_path = os.path.join(self.base_dir, clean_path)
+        if os.path.exists(full_path) and os.path.isfile(full_path):
+            try:
+                with open(full_path, "rb") as f:
+                    return f.read()
+            except Exception:
+                pass
+
+        return None
+
+    def delete_file(self, file_path_or_id: str) -> bool:
+        if not file_path_or_id:
+            return False
+
+        deleted = False
+        # 1. Try Supabase Storage deletion
+        admin_client = self._get_admin_client()
+        if admin_client:
+            try:
+                paths_to_remove = [file_path_or_id]
+                if file_path_or_id.startswith("uploads/"):
+                    paths_to_remove.append(file_path_or_id.replace("uploads/", ""))
+                admin_client.storage.from_(self.bucket_name).remove(paths_to_remove)
+                deleted = True
+            except Exception as e:
+                print(f"[StorageService] Failed to delete from Supabase storage: {e}")
+
+        # 2. Local disk cleanup
         full_path = os.path.join(self.base_dir, file_path_or_id)
         if os.path.exists(full_path):
             try:
                 os.remove(full_path)
-                return True
+                deleted = True
             except Exception as e:
                 print(f"[StorageService] Failed to delete local file {full_path}: {e}")
-        return False
+
+        return deleted
 
     def share_company_folder(
         self,
@@ -175,45 +158,28 @@ class StorageService:
         auditor_email: str
     ) -> Dict[str, Any]:
         """
-        Shares the company's document folder with the auditor's email address.
+        Returns cloud access details for the company's document folder in Supabase Storage.
         """
         clean_company = self._sanitize(company_name) or "Company"
         clean_tax_year = self._sanitize(tax_year.replace("/", "-"))
 
-        if self.gdrive_enabled and self.drive_service:
-            try:
-                root_id = self._gdrive_find_or_create_folder("TaxEaseLK_Documents")
-                company_folder_id = self._gdrive_find_or_create_folder(clean_company, parent_id=root_id)
-                tax_year_folder_id = self._gdrive_find_or_create_folder(f"Y-A {clean_tax_year}", parent_id=company_folder_id)
+        folder_prefix = f"{clean_company}/{clean_tax_year}"
+        admin_client = self._get_admin_client()
+        if admin_client:
+            supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+            folder_link = f"{supabase_url}/storage/v1/object/public/{self.bucket_name}/{folder_prefix}"
+            return {
+                "success": True,
+                "shared_with": auditor_email,
+                "folder_link": folder_link,
+                "mode": "supabase_storage"
+            }
 
-                # Add reader permission for auditor
-                perm_body = {
-                    'type': 'user',
-                    'role': 'reader',
-                    'emailAddress': auditor_email
-                }
-                self.drive_service.permissions().create(
-                    fileId=tax_year_folder_id,
-                    body=perm_body,
-                    sendNotificationEmail=True
-                ).execute()
-
-                folder_link = f"https://drive.google.com/drive/folders/{tax_year_folder_id}"
-                return {
-                    "success": True,
-                    "shared_with": auditor_email,
-                    "folder_link": folder_link,
-                    "mode": "gdrive"
-                }
-            except Exception as e:
-                print(f"[StorageService] GDrive folder share error: {e}")
-
-        # Fallback local notification
         return {
             "success": True,
             "shared_with": auditor_email,
-            "folder_link": f"https://drive.google.com/drive/folders/taxease_{clean_company}_{clean_tax_year}",
-            "mode": "local_simulated"
+            "folder_link": f"/api/documents?company_name={clean_company}",
+            "mode": "local"
         }
 
     def bundle_audit_pack(
@@ -224,19 +190,31 @@ class StorageService:
     ) -> io.BytesIO:
         """
         Bundles all company documents into an in-memory ZIP archive for 1-click auditor download.
+        Fetches directly from Supabase Storage bucket.
         """
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for doc in documents:
-                file_path = doc.get("file_path")
+                file_path = doc.get("file_path") or ""
                 doc_name = doc.get("name") or "document.pdf"
-                full_path = os.path.join(self.base_dir, file_path) if file_path else ""
+                written = False
 
-                if full_path and os.path.exists(full_path):
-                    zip_file.write(full_path, arcname=doc_name)
-                else:
-                    # Provide an informative manifest entry if file is purely in GDrive or mock
-                    manifest_text = f"TaxEaseLK Document Manifest\n\nName: {doc_name}\nType: {doc.get('type')}\nStatus: {doc.get('status')}\nAI Confidence: {doc.get('ai_confidence_percent')}%\nCloud Link: {doc.get('view_link')}\n"
+                # 1. Fetch file bytes (from Supabase or local)
+                data = self.download_file_bytes(file_path)
+                if data:
+                    zip_file.writestr(doc_name, data)
+                    written = True
+
+                # 2. Fallback manifest entry if raw bytes cannot be read
+                if not written:
+                    manifest_text = (
+                        f"TaxEaseLK Document Manifest\n\n"
+                        f"Name: {doc_name}\n"
+                        f"Type: {doc.get('type')}\n"
+                        f"Status: {doc.get('status')}\n"
+                        f"AI Confidence: {doc.get('ai_confidence_percent')}%\n"
+                        f"Cloud Link: {doc.get('view_link')}\n"
+                    )
                     zip_file.writestr(f"manifest_{doc_name}.txt", manifest_text)
 
         zip_buffer.seek(0)
