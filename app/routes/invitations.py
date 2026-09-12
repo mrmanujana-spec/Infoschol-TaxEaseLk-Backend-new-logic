@@ -39,42 +39,61 @@ def _save_json(filepath: str, data: Any):
         print(f"[Invitations] Failed to persist {filepath}: {e}")
 
 # Baseline default team members
-DEFAULT_TEAM = [
-    {
-        "id": "ft_1",
-        "name": "Ruwan Silva",
-        "initials": "RS",
-        "email": "ruwan.silva@abcholdings.lk",
-        "role": "Finance Director",
-        "status": "Active",
-        "lastActive": "Today, 10:15 AM",
-        "canSignReturns": True,
-        "company_name": "ABC Holdings (Pvt) Ltd"
-    },
-    {
-        "id": "ft_2",
-        "name": "Dinithi Perera",
-        "initials": "DP",
-        "email": "dinithi.p@abcholdings.lk",
-        "role": "Senior Accountant",
-        "status": "Active",
-        "lastActive": "Yesterday",
-        "canSignReturns": False,
-        "company_name": "ABC Holdings (Pvt) Ltd"
-    },
-]
+DEFAULT_TEAM = []
 
 # Baseline assigned auditor mapping
-DEFAULT_ASSIGNED = {
-    "ABC Holdings (Pvt) Ltd": {
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "auditor_email": "audit@karunaratne.lk",
-        "firm_name": "Karunaratne & Associates",
-        "auditor_name": "Mr. A. Karunaratne (FCA)",
-        "status": "Connected",
-        "invited_at": "01 Aug 2026",
+DEFAULT_ASSIGNED = {}
+
+
+def resolve_auditor_identity(auditor_input: str) -> Dict[str, str]:
+    """
+    Resolves an auditor by User ID (e.g. AUD-XXXXXXXX or UUID) or email.
+    Returns a dict with 'email', 'name', 'firm', and 'id'.
+    """
+    val = auditor_input.strip()
+    result = {
+        "email": val.lower(),
+        "name": "",
+        "firm": "",
+        "id": "",
     }
-}
+    admin_client = get_supabase_admin_client()
+    if not admin_client:
+        return result
+
+    try:
+        clean_id = val.upper()
+        if clean_id.startswith("AUD-"):
+            prefix = clean_id.replace("AUD-", "").lower()
+            res = admin_client.table("profiles").select("id, email, display_name, role").ilike("id", f"{prefix}%").execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or result["email"]).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+
+        if len(val) == 36 and "-" in val:
+            res = admin_client.table("profiles").select("id, email, display_name, role").eq("id", val).execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or result["email"]).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+
+        if "@" in val:
+            res = admin_client.table("profiles").select("id, email, display_name, role").ilike("email", val).execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or val).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+    except Exception:
+        pass
+
+    return result
 
 @router.post("/auditor-review/invite", response_model=AuditorInviteResponse)
 @router.post("/business/auditor/invite", response_model=AuditorInviteResponse)
@@ -82,10 +101,14 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
     """
     Sends an engagement invitation to an auditor and establishes them as the
     active assigned auditor for the company.
+    Supports invitation by Email or Auditor User ID (AUD-XXXXXXXX).
     """
-    firm = request.firmName or request.firm_name or "Certified Tax Auditor"
-    auditor = request.auditorName or request.auditor_name or firm
-    company = request.company_name.strip() if request.company_name and request.company_name.strip() else "ABC Holdings (Pvt) Ltd"
+    # Resolve auditor by User ID or email
+    resolved = resolve_auditor_identity(request.email)
+    actual_email = resolved["email"] or request.email.strip().lower()
+    actual_firm = request.firmName or request.firm_name or resolved["firm"] or "Certified Tax Auditor"
+    actual_name = request.auditorName or request.auditor_name or resolved["name"] or actual_firm
+    company = request.company_name.strip() if request.company_name and request.company_name.strip() else ""
 
     invite_id = f"inv_aud_{int(time.time() * 1000)}"
     now_str = datetime.now().strftime("%d %b %Y at %I:%M %p")
@@ -93,9 +116,9 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
     invite_record = {
         "id": invite_id,
         "company_name": company,
-        "email": request.email.strip().lower(),
-        "firm_name": firm,
-        "auditor_name": auditor,
+        "email": actual_email,
+        "firm_name": actual_firm,
+        "auditor_name": actual_name,
         "invite_type": "AUDITOR",
         "status": "Invited",
         "created_at": now_str,
@@ -116,34 +139,51 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
 
     assigned_map[company] = {
         "company_name": company,
-        "auditor_email": request.email.strip().lower(),
-        "firm_name": firm,
-        "auditor_name": auditor,
-        "status": "Invited",
+        "auditor_email": actual_email,
+        "firm_name": actual_firm,
+        "auditor_name": actual_name,
+        "status": "Active",
         "invited_at": now_str,
     }
     _save_json(ASSIGNED_AUDITORS_FILE, assigned_map)
 
-    # 3. Persist to Supabase if table exists
+    # 3. Persist to Supabase invitations and auditor_engagements tables
     admin_client = get_supabase_admin_client()
-    try:
-        admin_client.table("invitations").insert({
-            "id": invite_id,
-            "company_name": company,
-            "invite_type": "AUDITOR",
-            "email": request.email.strip().lower(),
-            "name": auditor,
-            "firm_name": firm,
-            "status": "PENDING",
-        }).execute()
-    except Exception as e:
-        print(f"[Supabase] Invitations table note: {e}")
+    if admin_client:
+        try:
+            admin_client.table("invitations").insert({
+                "id": invite_id,
+                "company_name": company,
+                "invite_type": "AUDITOR",
+                "email": actual_email,
+                "name": actual_name,
+                "firm_name": actual_firm,
+                "status": "PENDING",
+            }).execute()
+        except Exception as e:
+            print(f"[Supabase] Invitations table note: {e}")
+
+        try:
+            admin_client.table("auditor_engagements").upsert({
+                "id": f"eng_{int(time.time() * 1000)}",
+                "company_name": company,
+                "tax_year": "2025/26",
+                "auditor_email": actual_email,
+                "auditor_name": actual_name,
+                "auditor_firm": actual_firm,
+                "status": "ACTIVE",
+                "review_status": "PENDING",
+                "appointed_date": datetime.now().isoformat(),
+                "created_at": datetime.now().isoformat(),
+            }, on_conflict="company_name, tax_year").execute()
+        except Exception as e:
+            print(f"[Supabase] auditor_engagements sync note: {e}")
 
     return AuditorInviteResponse(
         success=True,
-        message=f"Engagement invitation successfully dispatched to {firm} ({request.email})",
+        message=f"Engagement invitation successfully dispatched to {actual_firm} ({actual_email})",
         invitation_id=invite_id,
-        status="Invited",
+        status="Active",
         assigned_auditor=assigned_map[company]
     )
 
@@ -151,8 +191,30 @@ def invite_auditor(request: AuditorInviteRequest, authorization: Optional[str] =
 def get_assigned_auditor(company_name: Optional[str] = None):
     """
     Retrieves the currently assigned / invited auditor for a given company.
+    Queries Supabase auditor_engagements first, falling back to local storage.
     """
-    target_company = company_name.strip() if company_name and company_name.strip() else "ABC Holdings (Pvt) Ltd"
+    target_company = company_name.strip() if company_name and company_name.strip() else ""
+
+    admin_client = get_supabase_admin_client()
+    if admin_client and target_company:
+        try:
+            res = admin_client.table("auditor_engagements").select("*").eq("company_name", target_company).eq("status", "ACTIVE").order("created_at", desc=True).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                eng = res.data[0]
+                return AssignedAuditorResponse(
+                    company_name=target_company,
+                    has_assigned_auditor=True,
+                    auditor={
+                        "company_name": target_company,
+                        "auditor_email": eng.get("auditor_email"),
+                        "firm_name": eng.get("auditor_firm"),
+                        "auditor_name": eng.get("auditor_name"),
+                        "status": "Active",
+                        "invited_at": eng.get("appointed_date") or eng.get("created_at"),
+                    }
+                )
+        except Exception:
+            pass
 
     assigned_map = _load_json(ASSIGNED_AUDITORS_FILE)
     if not isinstance(assigned_map, dict):
@@ -178,7 +240,7 @@ def invite_team_member(request: TeamInviteRequest):
     Invites a new finance team member with specific role and signing permissions.
     """
     can_sign = request.can_sign_returns if request.canSignReturns is None else request.canSignReturns
-    company = request.company_name or "ABC Holdings (Pvt) Ltd"
+    company = request.company_name or ""
 
     member_id = f"ft_{int(time.time() * 1000)}"
     initials = "".join([part[0] for part in request.name.strip().split() if part]).upper()[:2] or "TM"
@@ -215,7 +277,7 @@ def get_team_members(company_name: Optional[str] = None):
 
     if company_name:
         target = company_name.strip().lower()
-        team = [m for m in team if (m.get("company_name") or "ABC Holdings (Pvt) Ltd").lower() == target]
+        team = [m for m in team if (m.get("company_name") or "").lower() == target]
 
     return TeamListResponse(team=[TeamMemberResponse(**m) for m in team])
 

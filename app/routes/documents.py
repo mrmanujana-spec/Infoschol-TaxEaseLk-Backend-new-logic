@@ -57,9 +57,10 @@ def _format_size(size_bytes: int) -> str:
 
 def _get_user_info(authorization: Optional[str]) -> Dict[str, str]:
     default_info = {
-        "user_id": "usr_default_company",
-        "email": "admin@abc.lk",
-        "company_name": "ABC (Pvt) Ltd",
+        "user_id": "",
+        "email": "",
+        "company_name": "",
+        "role": "",
         "tax_year": "2025/26",
     }
     if not authorization or not authorization.startswith("Bearer "):
@@ -72,84 +73,90 @@ def _get_user_info(authorization: Optional[str]) -> Dict[str, str]:
         if user_res and user_res.user:
             u = user_res.user
             meta = u.user_metadata or {}
+            user_id = str(u.id)
+            email = str(u.email or "").lower()
+            role = (meta.get("role") or "").lower().strip()
+            company_name = meta.get("company_name") or meta.get("display_name") or ""
+            
+            # Fetch profile details if role or company_name missing from metadata
+            if not role or not company_name:
+                try:
+                    admin_client = get_supabase_admin_client()
+                    if admin_client:
+                        prof_res = admin_client.table("profiles").select("role, company_name, display_name").eq("id", user_id).execute()
+                        if prof_res.data and len(prof_res.data) > 0:
+                            p = prof_res.data[0]
+                            if not role:
+                                role = (p.get("role") or "").lower().strip()
+                            if not company_name:
+                                company_name = p.get("company_name") or p.get("display_name") or ""
+                except Exception:
+                    pass
+
             return {
-                "user_id": str(u.id),
-                "email": str(u.email),
-                "company_name": meta.get("company_name") or meta.get("display_name") or "ABC (Pvt) Ltd",
+                "user_id": user_id,
+                "email": email,
+                "company_name": company_name,
+                "role": role,
                 "tax_year": meta.get("current_fiscal_year") or "2025/26",
             }
     except Exception:
         pass
     return default_info
 
-# Initial baseline documents to display on first run
-DEFAULT_DOCUMENTS = [
-    {
-        "id": "doc_1",
-        "name": "Financial Statements.pdf",
-        "type": "Financial Statements",
-        "status": "processed",
-        "ai_confidence_percent": 99,
-        "uploaded_date": "16 Aug 2026",
-        "size_label": "4.2 MB",
-        "file_path": "uploads/ABC (Pvt) Ltd/2025-26/Financial Statements.pdf",
-        "view_link": "https://drive.google.com/file/d/gdrive_financial_statements/view",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "extracted_data": {"accounting_profit_before_tax": 24500000.0, "revenue": 128500000.0}
-    },
-    {
-        "id": "doc_2",
-        "name": "Trial Balance.xlsx",
-        "type": "Trial Balance",
-        "status": "processed",
-        "ai_confidence_percent": 99,
-        "uploaded_date": "16 Aug 2026",
-        "size_label": "1.8 MB",
-        "file_path": "uploads/ABC (Pvt) Ltd/2025-26/Trial Balance.xlsx",
-        "view_link": "https://drive.google.com/file/d/gdrive_trial_balance/view",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "extracted_data": {"total_debits": 142580400.0, "total_credits": 142580400.0, "is_balanced": True}
-    },
-    {
-        "id": "doc_3",
-        "name": "General Ledger.xlsx",
-        "type": "General Ledger",
-        "status": "review_required",
-        "ai_confidence_percent": 91,
-        "uploaded_date": "16 Aug 2026",
-        "size_label": "3.1 MB",
-        "file_path": "uploads/ABC (Pvt) Ltd/2025-26/General Ledger.xlsx",
-        "view_link": "https://drive.google.com/file/d/gdrive_general_ledger/view",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "extracted_data": {"review_reasons": ["Discrepancy detected in November ledger balance"]}
-    },
-    {
-        "id": "doc_4",
-        "name": "Fixed Asset Schedule.xlsx",
-        "type": "Fixed Assets",
-        "status": "review_required",
-        "ai_confidence_percent": 87,
-        "uploaded_date": "16 Aug 2026",
-        "size_label": "1.4 MB",
-        "file_path": "uploads/ABC (Pvt) Ltd/2025-26/Fixed Asset Schedule.xlsx",
-        "view_link": "https://drive.google.com/file/d/gdrive_fixed_assets/view",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "extracted_data": {"review_reasons": ["Depreciation method consistency requires auditor confirmation"]}
-    },
-    {
-        "id": "doc_5",
-        "name": "Previous CIT Return.pdf",
-        "type": "Previous CIT",
-        "status": "processed",
-        "ai_confidence_percent": 99,
-        "uploaded_date": "16 Aug 2026",
-        "size_label": "2.8 MB",
-        "file_path": "uploads/ABC (Pvt) Ltd/2025-26/Previous CIT Return.pdf",
-        "view_link": "https://drive.google.com/file/d/gdrive_previous_cit/view",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "extracted_data": {"prior_year_loss_brought_forward": 1200000.0}
-    },
-]
+def resolve_auditor_identity(auditor_input: str) -> Dict[str, str]:
+    """
+    Resolves an auditor by User ID (e.g. AUD-XXXXXXXX or UUID) or email.
+    Returns a dict with 'email', 'name', 'firm', and 'id'.
+    """
+    val = auditor_input.strip()
+    result = {
+        "email": val.lower(),
+        "name": "",
+        "firm": "",
+        "id": "",
+    }
+    admin_client = get_supabase_admin_client()
+    if not admin_client:
+        return result
+
+    try:
+        clean_id = val.upper()
+        if clean_id.startswith("AUD-"):
+            prefix = clean_id.replace("AUD-", "").lower()
+            res = admin_client.table("profiles").select("id, email, display_name, role").ilike("id", f"{prefix}%").execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or result["email"]).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+
+        if len(val) == 36 and "-" in val:
+            res = admin_client.table("profiles").select("id, email, display_name, role").eq("id", val).execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or result["email"]).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+
+        if "@" in val:
+            res = admin_client.table("profiles").select("id, email, display_name, role").ilike("email", val).execute()
+            if res.data and len(res.data) > 0:
+                p = res.data[0]
+                result["email"] = (p.get("email") or val).lower()
+                result["name"] = p.get("display_name") or ""
+                result["id"] = str(p.get("id"))
+                return result
+    except Exception:
+        pass
+
+    return result
+
+# Initial baseline documents - empty for fresh user experience
+DEFAULT_DOCUMENTS: List[Dict[str, Any]] = []
+
 
 # --- Endpoints ---
 
@@ -159,72 +166,111 @@ def get_documents_summary(
     authorization: Optional[str] = Header(None)
 ):
     """
-    Fetches uploaded documents. If company_name is provided, filters for that company.
-    Otherwise returns all documents (e.g. for the auditor view).
+    Fetches uploaded documents with strict tenant isolation:
+    - Business User: ONLY retrieves documents owned by their authenticated user_id or company.
+    - Auditor: ONLY retrieves documents for companies where they have an active statutory engagement.
+    - Unauthenticated: Returns zero documents.
     """
     user_info = _get_user_info(authorization)
-    
-    # 1. Check Supabase 'documents' table
+    user_id = user_info.get("user_id")
+    user_email = user_info.get("email", "").lower().strip()
+    user_company = user_info.get("company_name", "").strip()
+    role = user_info.get("role", "").lower().strip()
+
+    # Strict check: If neither user_id nor email could be verified, no documents are returned
+    if not user_id and not user_email:
+        return DocumentsSummaryResponse(
+            uploaded_count=0,
+            processed_count=0,
+            review_required_count=0,
+            missing_count=5,
+            documents=[]
+        )
+
+    is_auditor = "auditor" in role
     admin_client = get_supabase_admin_client()
     docs = []
-    try:
-        query = admin_client.table("documents").select("*")
-        if company_name:
-            query = query.ilike("company_name", company_name.strip())
-        res = query.order("uploaded_at", desc=True).execute()
-        if res.data and len(res.data) > 0:
-            docs_data = cast(List[Dict[str, Any]], res.data)
-            docs = [
-                {
-                    "id": str(d["id"]),
-                    "name": d["name"],
-                    "type": d.get("doc_type") or "Financial Statements",
-                    "status": d.get("status") or "processed",
-                    "ai_confidence_percent": d.get("ai_confidence_percent") or 98,
-                    "uploaded_date": datetime.fromisoformat(d["uploaded_at"]).strftime("%d %b %Y") if d.get("uploaded_at") else "Today",
-                    "size_label": _format_size(d.get("file_size", 1024000)),
-                    "file_path": d.get("file_path"),
-                    "view_link": d.get("gdrive_view_link") or d.get("view_link"),
-                    "extracted_data": d.get("extracted_data") or {},
-                    "company_name": d.get("company_name") or "ABC Holdings (Pvt) Ltd",
-                }
-                for d in docs_data
-            ]
-    except Exception:
-        pass
 
-    # 2. If Supabase table was not populated, read local vault DB
+    # 1. Supabase Query with strict scoping
+    try:
+        if is_auditor:
+            # Auditor access: Find all companies assigned to this auditor
+            engaged_companies: List[str] = []
+            if admin_client and user_email:
+                eng_res = admin_client.table("auditor_engagements").select("company_name").eq("auditor_email", user_email).eq("status", "ACTIVE").execute()
+                for e in (eng_res.data or []):
+                    c = e.get("company_name")
+                    if c and c not in engaged_companies:
+                        engaged_companies.append(c)
+
+                inv_res = admin_client.table("invitations").select("company_name").eq("email", user_email).execute()
+                for inv in (inv_res.data or []):
+                    c = inv.get("company_name")
+                    if c and c not in engaged_companies:
+                        engaged_companies.append(c)
+
+            # Filter documents by engaged companies
+            if company_name:
+                req_comp = company_name.strip()
+                # Ensure auditor is authorized for this requested company
+                matched = next((c for c in engaged_companies if c.lower() == req_comp.lower()), None)
+                if matched:
+                    res = admin_client.table("documents").select("*").ilike("company_name", matched).order("uploaded_at", desc=True).execute()
+                    if res.data:
+                        docs = res.data
+            else:
+                if engaged_companies:
+                    res = admin_client.table("documents").select("*").in_("company_name", engaged_companies).order("uploaded_at", desc=True).execute()
+                    if res.data:
+                        docs = res.data
+        else:
+            # Business User access: strictly isolated to the user's own identity
+            if admin_client and user_id:
+                res = admin_client.table("documents").select("*").eq("user_id", user_id).order("uploaded_at", desc=True).execute()
+                if res.data and len(res.data) > 0:
+                    docs = res.data
+                elif user_company:
+                    # Fallback for documents uploaded before user_id column assignment
+                    res2 = admin_client.table("documents").select("*").ilike("company_name", user_company).order("uploaded_at", desc=True).execute()
+                    if res2.data:
+                        docs = res2.data
+    except Exception as e:
+        print(f"[Documents] Query note: {e}")
+
+    # 2. Local DB Fallback with identical isolation guarantees
     if not docs:
         local_docs = _load_local_db()
-        if not local_docs:
-            _save_local_db(DEFAULT_DOCUMENTS)
-            docs = list(DEFAULT_DOCUMENTS)
+        if is_auditor:
+            docs = [d for d in local_docs if (d.get("company_name") or "").lower() in [c.lower() for c in engaged_companies]]
+            if company_name:
+                docs = [d for d in docs if (d.get("company_name") or "").lower() == company_name.strip().lower()]
         else:
-            docs = local_docs
-
-        if company_name:
-            target_filter = company_name.strip().lower()
-            filtered = [d for d in docs if (d.get("company_name") or "ABC Holdings (Pvt) Ltd").lower() == target_filter]
-            docs = filtered
+            docs = [
+                d for d in local_docs
+                if (user_id and d.get("user_id") == user_id) or
+                   (user_company and (d.get("company_name") or "").lower() == user_company.lower())
+            ]
 
     uploaded_count = len(docs)
     processed_count = sum(1 for d in docs if d.get("status") == "processed")
     review_required_count = sum(1 for d in docs if d.get("status") == "review_required")
-    missing_count = max(0, 10 - uploaded_count)
+    required_types = {"Financial Statements", "Trial Balance", "General Ledger", "Fixed Assets", "Previous CIT"}
+    uploaded_types = {d.get("type") or d.get("doc_type") for d in docs}
+    missing_count = len(required_types - uploaded_types)
 
     doc_models = [
         DocumentResponse(
-            id=d["id"],
+            id=str(d["id"]),
             name=d["name"],
             type=d.get("type") or d.get("doc_type") or "Financial Statements",
             status=d.get("status") or "processed",
-            ai_confidence_percent=d.get("ai_confidence_percent"),
-            uploaded_date=d.get("uploaded_date") or "Today",
-            size_label=d.get("size_label"),
+            ai_confidence_percent=d.get("ai_confidence_percent") or 98,
+            uploaded_date=datetime.fromisoformat(d["uploaded_at"]).strftime("%d %b %Y") if d.get("uploaded_at") else d.get("uploaded_date") or "Today",
+            size_label=_format_size(d.get("file_size", 1024000)) if "file_size" in d else d.get("size_label", "1.0 MB"),
             file_url=f"/api/documents/download/{d['name']}",
-            view_link=d.get("view_link"),
-            extracted_data=d.get("extracted_data"),
-            company_name=d.get("company_name") or "ABC Holdings (Pvt) Ltd",
+            view_link=d.get("gdrive_view_link") or d.get("view_link"),
+            extracted_data=d.get("extracted_data") or {},
+            company_name=d.get("company_name") or d.get("company") or user_company or "Company",
         )
         for d in docs
     ]
@@ -334,22 +380,52 @@ async def upload_document(
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str, authorization: Optional[str] = Header(None)):
     """
-    Deletes a document from storage and database.
+    Deletes a document from storage and database, strictly verifying ownership.
     """
-    # 1. Remove from local DB
+    user_info = _get_user_info(authorization)
+    user_id = user_info.get("user_id")
+    user_company = (user_info.get("company_name") or "").lower().strip()
+
+    if not user_id and not user_info.get("email"):
+        raise HTTPException(status_code=401, detail="Authentication required to delete documents")
+
+    # 1. Supabase check & delete
+    admin_client = get_supabase_admin_client()
+    if admin_client:
+        try:
+            doc_res = admin_client.table("documents").select("id, user_id, company_name, file_path").eq("id", doc_id).execute()
+            if doc_res.data and len(doc_res.data) > 0:
+                doc = doc_res.data[0]
+                owner_id = str(doc.get("user_id") or "")
+                doc_company = (doc.get("company_name") or "").lower().strip()
+                if owner_id and user_id and owner_id != user_id:
+                    raise HTTPException(status_code=403, detail="Unauthorized to delete another user's document")
+                if not owner_id and user_company and doc_company != user_company:
+                    raise HTTPException(status_code=403, detail="Unauthorized to delete another company's document")
+                
+                if doc.get("file_path"):
+                    storage_service.delete_file(doc["file_path"])
+                admin_client.table("documents").delete().eq("id", doc_id).execute()
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[Supabase] Document delete note: {e}")
+
+    # 2. Local DB cleanup with ownership check
     local_docs = _load_local_db()
     matched = [d for d in local_docs if d.get("id") == doc_id]
     if matched:
-        storage_service.delete_file(matched[0].get("file_path", ""))
-        local_docs = [d for d in local_docs if d.get("id") != doc_id]
-        _save_local_db(local_docs)
+        d = matched[0]
+        owner_id = str(d.get("user_id") or "")
+        doc_company = (d.get("company_name") or "").lower().strip()
+        if owner_id and user_id and owner_id != user_id:
+            raise HTTPException(status_code=403, detail="Unauthorized to delete another user's document")
+        if not owner_id and user_company and doc_company != user_company:
+            raise HTTPException(status_code=403, detail="Unauthorized to delete another company's document")
 
-    # 2. Remove from Supabase
-    admin_client = get_supabase_admin_client()
-    try:
-        admin_client.table("documents").delete().eq("id", doc_id).execute()
-    except Exception:
-        pass
+        storage_service.delete_file(d.get("file_path", ""))
+        local_docs = [x for x in local_docs if x.get("id") != doc_id]
+        _save_local_db(local_docs)
 
     return {"success": True, "message": "Document deleted successfully"}
 
@@ -410,7 +486,7 @@ def export_audit_pack(authorization: Optional[str] = Header(None)):
     Bundles all company documents into an in-memory ZIP archive for 1-click auditor download.
     """
     user_info = _get_user_info(authorization)
-    local_docs = _load_local_db() or DEFAULT_DOCUMENTS
+    local_docs = _load_local_db()
 
     zip_buffer = storage_service.bundle_audit_pack(
         company_name=user_info["company_name"],
@@ -443,6 +519,34 @@ def get_financials_summary(authorization: Optional[str] = Header(None)):
     status_db = _load_auditor_status_db()
     company_name = user_info.get("company_name", "ABC (Pvt) Ltd")
     auditor_status = status_db.get(company_name, {}).get("status", "Under Review by Auditor")
+
+    docs = _load_local_db()
+    if len(docs) == 0:
+        return {
+            "revenue": "Rs. 0.00",
+            "expenses": "Rs. 0.00",
+            "accounting_profit": "Rs. 0.00",
+            "cost_of_sales": "Rs. 0.00",
+            "gross_profit": "Rs. 0.00",
+            "gross_margin_percent": 0.0,
+            "operating_expenses": "Rs. 0.00",
+            "net_pbt": "Rs. 0.00",
+            "disallowable_add_backs": "Rs. 0.00",
+            "tax_capital_allowances": "Rs. 0.00",
+            "taxable_income": "Rs. 0.00",
+            "cit_rate_percent": int(cit_rate * 100),
+            "est_cit_liability": "Rs. 0.00",
+            "tax_adjustments": "Rs. 0.00",
+            "auditor_status": "Waiting for Documents",
+            "ird_gazette_ref": gazette_ref,
+            "tabs": {
+                "Income Statement": [],
+                "Balance Sheet": [],
+                "Trial Balance": [],
+                "General Ledger": [],
+                "Fixed Assets": [],
+            }
+        }
 
     revenue_val = 25000000
     cogs_val = 15200000
@@ -561,6 +665,22 @@ def generate_financials_report(authorization: Optional[str] = Header(None)):
         ]
     }
 
+@router.post("/documents/clear-all")
+def clear_all_documents(authorization: Optional[str] = Header(None)):
+    """
+    Clears all local documents so the user can test with a completely clean slate from scratch.
+    """
+    _save_local_db([])
+    return {"success": True, "message": "All documents cleared. Blank workspace initialized."}
+
+@router.post("/documents/reset-demo")
+def reset_demo_documents(authorization: Optional[str] = Header(None)):
+    """
+    Restores standard sample documents for demo purposes.
+    """
+    _save_local_db(DEFAULT_DOCUMENTS)
+    return {"success": True, "message": "Demo sample documents restored."}
+
 # --- Auditor Document Checklist API ---
 CHECKLISTS_DB_FILE = os.path.join(storage_service.uploads_dir, "checklists_db.json")
 
@@ -636,16 +756,16 @@ def get_company_checklist(company_name: str):
     return {
         "company_name": company_name,
         "items": DEFAULT_STATUTORY_CHECKLIST,
-        "auditor_name": "Mr. A. Karunaratne (FCA)",
-        "auditor_firm": "Karunaratne & Associates"
+        "auditor_name": "Assigned Auditor",
+        "auditor_firm": "Chartered Accountants"
     }
 
 @router.post("/auditor/checklists")
 def save_auditor_checklist(payload: Dict[str, Any]):
-    company_name = payload.get("company_name", "ABC Holdings (Pvt) Ltd")
+    company_name = payload.get("company_name", "")
     items = payload.get("items", DEFAULT_STATUTORY_CHECKLIST)
-    auditor_name = payload.get("auditor_name", "Mr. A. Karunaratne (FCA)")
-    auditor_firm = payload.get("auditor_firm", "Karunaratne & Associates")
+    auditor_name = payload.get("auditor_name", "Assigned Auditor")
+    auditor_firm = payload.get("auditor_firm", "Chartered Accountants")
 
     db = _load_checklists_db()
     db[company_name] = {
@@ -796,8 +916,7 @@ def get_dashboard(authorization: Optional[str] = Header(None)):
     company_status = (
         status_db.get(company_name)
         or status_db.get(company_name.lower())
-        or status_db.get("co_1")
-        or "in_progress"
+        or ("pending" if uploaded_count > 0 else "waiting")
     )
 
     client = get_supabase_admin_client()
@@ -818,39 +937,50 @@ def get_dashboard(authorization: Optional[str] = Header(None)):
         s5_pct = 100
         composite_pct = 100
         auditor_status_label = "approved"
-        s4_ratio = "5/5 Resolved"
+        s4_ratio = "All Inquiries Resolved"
         s4_sublabel = "All inquiries cleared by auditor"
         s5_ratio = "Signed Off"
         s5_sublabel = "Audited & Certified for RAMIS submission"
     elif company_status_norm in ["waiting_for_company"]:
         s4_pct = 40
-        s5_pct = 50
+        s5_pct = 0
         composite_pct = int(0.20 * s1_pct + 0.20 * s2_pct + 0.20 * s3_pct + 0.20 * s4_pct + 0.20 * s5_pct)
         auditor_status_label = "waiting_for_company"
-        s4_ratio = "2/5 Resolved"
+        s4_ratio = "Clarifications Needed"
         s4_sublabel = "Awaiting client clarification responses"
-        s5_ratio = "In Progress"
+        s5_ratio = "Under Review"
         s5_sublabel = "Auditor reviewing responses"
-    elif company_status_norm in ["pending"]:
-        s4_pct = 20
+    elif company_status_norm in ["in_progress", "under_review"]:
+        s4_pct = 50
         s5_pct = 20
         composite_pct = int(0.20 * s1_pct + 0.20 * s2_pct + 0.20 * s3_pct + 0.20 * s4_pct + 0.20 * s5_pct)
-        auditor_status_label = "pending"
-        s4_ratio = "Queued"
-        s4_sublabel = "Initial auditor review pending"
-        s5_ratio = "Queued"
-        s5_sublabel = "Awaiting auditor pickup"
-    else:
-        s4_pct = 60
-        s5_pct = 60
-        composite_pct = int(0.20 * s1_pct + 0.20 * s2_pct + 0.20 * s3_pct + 0.20 * s4_pct + 0.20 * s5_pct)
         auditor_status_label = "in_progress"
-        s4_ratio = "3/5 Resolved"
-        s4_sublabel = "2 open clarification point(s)"
+        s4_ratio = "In Progress"
+        s4_sublabel = "Auditor reviewing tax pack"
         s5_ratio = "Under Review"
         s5_sublabel = "Awaiting final auditor confirmation"
+    else:
+        # Fresh / Waiting state
+        s4_pct = 0
+        s5_pct = 0
+        composite_pct = int(0.20 * s1_pct + 0.20 * s2_pct + 0.20 * s3_pct + 0.20 * s4_pct + 0.20 * s5_pct)
+        auditor_status_label = "waiting"
+        s4_ratio = "No Open Inquiries"
+        s4_sublabel = "No auditor queries yet"
+        s5_ratio = "Pending Handover"
+        s5_sublabel = "Awaiting auditor appointment & handover"
 
-    taxable_income = 26100000
+    # Extract profit if any doc has it
+    extracted_profit = 0
+    for d in docs:
+        if isinstance(d.get("extracted_data"), dict) and "accounting_profit_before_tax" in d["extracted_data"]:
+            try:
+                extracted_profit = float(d["extracted_data"]["accounting_profit_before_tax"])
+                break
+            except Exception:
+                pass
+
+    taxable_income = extracted_profit
     estimated_cit_liability = int(taxable_income * standard_cit_rate)
 
     return {
@@ -859,39 +989,39 @@ def get_dashboard(authorization: Optional[str] = Header(None)):
         "steps": {
             "document_gathering": {
                 "percent": s1_pct,
-                "state": "done" if s1_pct == 100 else "in_progress",
+                "state": "done" if s1_pct == 100 else ("in_progress" if s1_pct > 0 else "pending"),
                 "ratio_label": f"{provided_required}/5 Gathered",
                 "sublabel": "All statutory docs provided" if s1_pct == 100 else f"{5 - provided_required} statutory doc(s) missing"
             },
             "ai_extraction": {
                 "percent": s2_pct,
-                "state": "warning" if review_required_count > 0 else "done",
+                "state": "warning" if review_required_count > 0 else ("done" if s2_pct == 100 and uploaded_count > 0 else "pending"),
                 "ratio_label": f"{processed_count}/{uploaded_count} Extracted",
-                "sublabel": f"{review_required_count} doc needs review" if review_required_count > 0 else "All files OCR-parsed"
+                "sublabel": f"{review_required_count} doc needs review" if review_required_count > 0 else ("All files OCR-parsed" if uploaded_count > 0 else "Upload documents to begin")
             },
             "auditor_handover": {
-                "percent": s3_pct,
-                "state": "done" if s3_pct == 100 else "in_progress",
-                "ratio_label": "Pack Handed Over" if s3_pct == 100 else "Ready for Handover",
-                "sublabel": "Submitted to Karunaratne & Assoc" if s3_pct == 100 else "Submit in Documents tab"
+                "percent": s3_pct if uploaded_count > 0 else 0,
+                "state": "done" if s3_pct == 100 and uploaded_count > 0 else "pending",
+                "ratio_label": "Pack Handed Over" if s3_pct == 100 and uploaded_count > 0 else "Ready for Handover",
+                "sublabel": "Submitted to Auditor" if s3_pct == 100 and uploaded_count > 0 else "Submit in Documents tab"
             },
             "auditor_inquiries": {
                 "percent": s4_pct,
-                "state": "done" if s4_pct == 100 else "in_progress",
+                "state": "done" if s4_pct == 100 else ("in_progress" if s4_pct > 0 else "pending"),
                 "ratio_label": s4_ratio,
                 "sublabel": s4_sublabel
             },
             "audit_sign_off": {
                 "percent": s5_pct,
-                "state": "done" if s5_pct == 100 else "in_progress",
+                "state": "done" if s5_pct == 100 else ("in_progress" if s5_pct > 0 else "pending"),
                 "ratio_label": s5_ratio,
                 "sublabel": s5_sublabel
             }
         },
         "metrics": {
             "documents_uploaded": uploaded_count,
-            "documents_missing": max(0, 10 - uploaded_count),
-            "accounting_profit": 4600000,
+            "documents_missing": max(0, 5 - provided_required),
+            "accounting_profit": extracted_profit,
             "taxable_income": taxable_income,
             "standard_cit_rate": standard_cit_rate,
             "cit_rate_label": f"{int(standard_cit_rate * 100)}%",
@@ -913,23 +1043,7 @@ def _load_engagements_db() -> List[Dict[str, Any]]:
                 return json.load(f)
         except Exception:
             return []
-    # Default seed engagement for demo
-    default_seed = [
-        {
-            "id": "eng_seed_abc_karunaratne",
-            "company_name": "ABC (Pvt) Ltd",
-            "tax_year": "2025/26",
-            "auditor_email": "audit@karunaratne.lk",
-            "auditor_name": "Mr. A. Karunaratne (FCA)",
-            "auditor_firm": "Karunaratne & Associates",
-            "status": "ACTIVE",
-            "appointed_date": "2025-04-01T09:00:00Z",
-            "concluded_date": None,
-            "created_at": "2025-04-01T09:00:00Z",
-        }
-    ]
-    _save_engagements_db(default_seed)
-    return default_seed
+    return []
 
 def _save_engagements_db(engs: List[Dict[str, Any]]):
     try:
@@ -945,59 +1059,8 @@ def _load_reviews_db() -> List[Dict[str, Any]]:
                 return json.load(f)
         except Exception:
             return []
-    # Default seed reviews for Karunaratne & Associates (48 client reviews, avg 4.9)
-    default_reviews = [
-        {
-            "id": "rev_seed_1",
-            "company_name": "Lanka Logistics PLC",
-            "tax_year": "2024/25",
-            "auditor_email": "audit@karunaratne.lk",
-            "auditor_name": "Mr. A. Karunaratne (FCA)",
-            "auditor_firm": "Karunaratne & Associates",
-            "rating": 5,
-            "timeliness_rating": 5,
-            "communication_rating": 5,
-            "technical_rating": 5,
-            "review_comment": "Exceptional thoroughness during our statutory CIT audit. Resolved complex transfer pricing questions within 48 hours.",
-            "client_reviewer_name": "Head of Finance",
-            "created_at": "2025-02-14T10:00:00Z",
-            "updated_at": "2025-02-14T10:00:00Z",
-        },
-        {
-            "id": "rev_seed_2",
-            "company_name": "Ceylon Retail Holdings",
-            "tax_year": "2024/25",
-            "auditor_email": "audit@karunaratne.lk",
-            "auditor_name": "Mr. A. Karunaratne (FCA)",
-            "auditor_firm": "Karunaratne & Associates",
-            "rating": 5,
-            "timeliness_rating": 5,
-            "communication_rating": 4,
-            "technical_rating": 5,
-            "review_comment": "Seamless handover through the TaxEase portal. Document verification was completed ahead of RAMIS deadline.",
-            "client_reviewer_name": "Chief Financial Officer",
-            "created_at": "2025-05-20T14:30:00Z",
-            "updated_at": "2025-05-20T14:30:00Z",
-        },
-        {
-            "id": "rev_seed_3",
-            "company_name": "Colombo Tech Ventures",
-            "tax_year": "2024/25",
-            "auditor_email": "audit@karunaratne.lk",
-            "auditor_name": "Mr. A. Karunaratne (FCA)",
-            "auditor_firm": "Karunaratne & Associates",
-            "rating": 5,
-            "timeliness_rating": 5,
-            "communication_rating": 5,
-            "technical_rating": 5,
-            "review_comment": "Highly recommended for IT exporters looking for clear BOI tax holiday guidance and CIT schedules.",
-            "client_reviewer_name": "Finance Director",
-            "created_at": "2025-08-11T09:15:00Z",
-            "updated_at": "2025-08-11T09:15:00Z",
-        }
-    ]
-    _save_reviews_db(default_reviews)
-    return default_reviews
+    return []
+
 
 def _save_reviews_db(revs: List[Dict[str, Any]]):
     try:
@@ -1050,6 +1113,12 @@ def appoint_auditor_engagement(req: AuditorEngagementRequest):
     """
     client = get_supabase_admin_client()
 
+    # Resolve auditor by User ID (AUD-XXXXXXXX / UUID) or email
+    resolved = resolve_auditor_identity(req.auditor_email)
+    actual_email = resolved["email"] or req.auditor_email.strip().lower()
+    actual_name = req.auditor_name if req.auditor_name and req.auditor_name != req.auditor_email else (resolved["name"] or req.auditor_firm or "Certified Tax Auditor")
+    actual_firm = req.auditor_firm or "Certified Tax Practice"
+
     # 1. Check existing active auditor in Supabase or local
     existing_active = None
     if client:
@@ -1072,15 +1141,15 @@ def appoint_auditor_engagement(req: AuditorEngagementRequest):
             existing_active = matches[0]
 
     # If already active with SAME auditor, return success idempotent
-    if existing_active and existing_active.get("auditor_email") == req.auditor_email:
+    if existing_active and existing_active.get("auditor_email") == actual_email:
         return {
             "success": True,
-            "message": f"{req.auditor_name} ({req.auditor_firm}) is already your appointed active auditor for {req.tax_year}.",
+            "message": f"{actual_name} ({actual_firm}) is already your appointed active auditor for {req.tax_year}.",
             "engagement": existing_active
         }
 
     # If active with a DIFFERENT auditor, REJECT under 1-Auditor statutory rule!
-    if existing_active and existing_active.get("auditor_email") != req.auditor_email:
+    if existing_active and existing_active.get("auditor_email") != actual_email:
         curr_auditor = existing_active.get("auditor_name", "another auditor")
         curr_firm = existing_active.get("auditor_firm", "an audit firm")
         raise HTTPException(
@@ -1099,10 +1168,11 @@ def appoint_auditor_engagement(req: AuditorEngagementRequest):
         "id": f"eng_{int(time.time() * 1000)}",
         "company_name": req.company_name,
         "tax_year": req.tax_year,
-        "auditor_email": req.auditor_email,
-        "auditor_name": req.auditor_name,
-        "auditor_firm": req.auditor_firm,
+        "auditor_email": actual_email,
+        "auditor_name": actual_name,
+        "auditor_firm": actual_firm,
         "status": "ACTIVE",
+        "review_status": "PENDING",
         "appointed_date": datetime.now().isoformat(),
         "concluded_date": None,
         "created_at": datetime.now().isoformat(),
@@ -1200,16 +1270,16 @@ def get_auditor_reviews(auditor_email: str):
         avg_comm = round(sum(r.get("communication_rating", 5) for r in reviews) / total_count, 1)
         avg_tech = round(sum(r.get("technical_rating", 5) for r in reviews) / total_count, 1)
     else:
-        avg_overall = 4.9
-        total_count = 48
-        avg_timeliness = 4.9
-        avg_comm = 4.8
-        avg_tech = 5.0
+        avg_overall = 0.0
+        total_count = 0
+        avg_timeliness = 0.0
+        avg_comm = 0.0
+        avg_tech = 0.0
 
     return {
         "success": True,
         "auditor_email": auditor_email,
-        "rank": "#1 Verified CA Sri Lanka",
+        "rank": "Verified CA Sri Lanka",
         "average_rating": avg_overall,
         "total_reviews": total_count,
         "subcategories": {
@@ -1384,14 +1454,11 @@ def update_tax_rule(tax_year: str, req: UpdateTaxRuleRequest):
 # -----------------------------------------------------------------------------
 
 def _resolve_company_name_from_id(company_id: str) -> str:
-    mapping = {
-        "co_1": "ABC Holdings (Pvt) Ltd",
-        "co_2": "Lanka Trading (Pvt) Ltd",
-        "co_3": "Ocean Foods (Pvt) Ltd",
-        "co_4": "Ceylon Retail Holdings",
-        "co_5": "Colombo Tech Ventures"
-    }
-    return mapping.get(company_id, company_id)
+    engs = _load_engagements_db()
+    for eng in engs:
+        if eng.get("id") == company_id or str(eng.get("company_name", "")).strip().lower() == company_id.strip().lower():
+            return eng.get("company_name", company_id)
+    return company_id
 
 @router.patch("/auditor/review-queue/{company_id}/status")
 @router.post("/auditor/review-queue/{company_id}/status")
@@ -1456,5 +1523,277 @@ def update_company_audit_status(
         "message": f"Company status successfully transitioned to '{status_val}'.",
         "updated_at": now_iso
     }
+
+
+# -----------------------------------------------------------------------------
+# AUDITOR PORTAL API (Dashboard, Companies, Review Queue, Settings)
+# -----------------------------------------------------------------------------
+
+@router.get("/auditor/dashboard")
+def get_auditor_dashboard(authorization: Optional[str] = Header(None)):
+    """
+    Returns live dynamic metrics for the logged-in auditor based on assigned engagements.
+    Strictly isolated: unauthenticated or non-auditor callers receive zero metrics.
+    """
+    user_info = _get_user_info(authorization)
+    auditor_email = user_info.get("email", "").lower().strip()
+    auditor_id = user_info.get("user_id", "")
+    
+    if not auditor_email and not auditor_id:
+        return {
+            "companies_assigned": 0,
+            "under_review": 0,
+            "pending_reviews": 0,
+            "critical_issues": 0,
+            "completed_reviews": 0,
+            "priority_reviews": [],
+            "workload": {
+                "pending": 0,
+                "in_progress": 0,
+                "waiting_for_company": 0,
+                "ready_for_approval": 0,
+                "completed": 0,
+            },
+            "recent_activity": []
+        }
+
+    client = get_supabase_admin_client()
+    engagements: List[Dict[str, Any]] = []
+    if client and auditor_email:
+        try:
+            res = client.table("auditor_engagements").select("*").eq("auditor_email", auditor_email).execute()
+            if res.data:
+                engagements = res.data
+        except Exception:
+            pass
+
+    if not engagements and auditor_email:
+        local_engs = _load_engagements_db()
+        engagements = [e for e in local_engs if e.get("auditor_email", "").lower() == auditor_email]
+
+    # Filter active engagements
+    active_engagements = [e for e in engagements if e.get("status") == "ACTIVE"]
+    companies_count = len(active_engagements)
+
+    # Status counts
+    pending_count = 0
+    in_progress_count = 0
+    waiting_for_company_count = 0
+    ready_for_approval_count = 0
+    completed_count = 0
+
+    priority_reviews = []
+    for eng in active_engagements:
+        c_name = eng.get("company_name", "Company")
+        st = (eng.get("review_status") or "PENDING").upper()
+        if st in ["PENDING"]:
+            pending_count += 1
+            priority_reviews.append({
+                "name": c_name,
+                "status": "Pending",
+                "cit_status_badge": "Under Review",
+                "critical_count": 0,
+                "warnings_count": 0,
+                "progress_percent": 10,
+                "due_date": "30 Sep"
+            })
+        elif st in ["IN_PROGRESS"]:
+            in_progress_count += 1
+            priority_reviews.append({
+                "name": c_name,
+                "status": "In Progress",
+                "cit_status_badge": "Under Review",
+                "critical_count": 0,
+                "warnings_count": 1,
+                "progress_percent": 50,
+                "due_date": "30 Sep"
+            })
+        elif st in ["WAITING_FOR_COMPANY"]:
+            waiting_for_company_count += 1
+            priority_reviews.append({
+                "name": c_name,
+                "status": "Waiting for Company",
+                "cit_status_badge": "Waiting for Company",
+                "critical_count": 1,
+                "warnings_count": 0,
+                "progress_percent": 60,
+                "due_date": "30 Sep"
+            })
+        elif st in ["READY_FOR_APPROVAL"]:
+            ready_for_approval_count += 1
+            priority_reviews.append({
+                "name": c_name,
+                "status": "Ready for Approval",
+                "cit_status_badge": "Ready for Auditor",
+                "critical_count": 0,
+                "warnings_count": 0,
+                "progress_percent": 90,
+                "due_date": "30 Sep"
+            })
+        elif st in ["APPROVED", "COMPLETED"]:
+            completed_count += 1
+
+    return {
+        "companies_assigned": companies_count,
+        "under_review": in_progress_count + waiting_for_company_count + ready_for_approval_count,
+        "pending_reviews": pending_count,
+        "critical_issues": sum(1 for p in priority_reviews if p.get("critical_count", 0) > 0),
+        "completed_reviews": completed_count,
+        "priority_reviews": priority_reviews,
+        "workload": {
+            "pending": pending_count,
+            "in_progress": in_progress_count,
+            "waiting_for_company": waiting_for_company_count,
+            "ready_for_approval": ready_for_approval_count,
+            "completed": completed_count,
+        },
+        "recent_activity": []
+    }
+
+
+@router.get("/auditor/companies")
+def get_auditor_companies(authorization: Optional[str] = Header(None)):
+    """
+    Returns list of client companies assigned to this auditor.
+    Strictly isolated: unauthenticated callers receive empty list.
+    """
+    user_info = _get_user_info(authorization)
+    auditor_email = user_info.get("email", "").lower().strip()
+    if not auditor_email:
+        return []
+
+    client = get_supabase_admin_client()
+    engagements: List[Dict[str, Any]] = []
+    if client and auditor_email:
+        try:
+            res = client.table("auditor_engagements").select("*").eq("auditor_email", auditor_email).execute()
+            if res.data:
+                engagements = res.data
+        except Exception:
+            pass
+
+    if not engagements and auditor_email:
+        local_engs = _load_engagements_db()
+        engagements = [e for e in local_engs if e.get("auditor_email", "").lower() == auditor_email]
+
+    active_engagements = [e for e in engagements if e.get("status") == "ACTIVE"]
+
+    result = []
+    for eng in active_engagements:
+        c_name = eng.get("company_name", "Company")
+        st = (eng.get("review_status") or "Pending").title()
+        result.append({
+            "id": eng.get("id", f"eng_{c_name}"),
+            "name": c_name,
+            "tin_number": "Pending Verification",
+            "current_fiscal_year": eng.get("tax_year", "2025/26"),
+            "status": st,
+            "cit_status_badge": st,
+            "critical_count": 0,
+            "warnings_count": 0,
+            "progress_percent": 100 if st == "Approved" else 50 if st == "In Progress" else 10,
+            "due_date": "30 Sep",
+            "contact_email": "",
+            "contact_phone": "",
+            "registration_number": "PV Registration",
+            "address": "Colombo, Sri Lanka",
+            "business_category": "Corporate Business",
+            "annual_turnover": "Rs. 0.00",
+            "contact_person": "Company Representative",
+            "tax_office": "Inland Revenue Department"
+        })
+
+    return result
+
+
+AUDITOR_SETTINGS_DB_FILE = os.path.join(storage_service.uploads_dir, "auditor_settings_db.json")
+
+def _load_auditor_settings_db() -> Dict[str, Any]:
+    if os.path.exists(AUDITOR_SETTINGS_DB_FILE):
+        try:
+            with open(AUDITOR_SETTINGS_DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_auditor_settings_db(data: Dict[str, Any]):
+    try:
+        with open(AUDITOR_SETTINGS_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[AuditorSettingsDB] Failed to persist: {e}")
+
+@router.get("/auditor/settings")
+def get_auditor_settings(authorization: Optional[str] = Header(None)):
+    user_info = _get_user_info(authorization)
+    auditor_email = user_info.get("email", "").lower().strip()
+    db = _load_auditor_settings_db()
+    saved = db.get(auditor_email) or db.get("default")
+    if saved:
+        return saved
+
+    # Fresh auditor profile
+    return {
+        "profile": {
+            "fullName": user_info.get("company_name") or "Chartered Accountant",
+            "email": auditor_email,
+            "phone": "",
+            "licenseNumber": "",
+            "organization": "Audit Firm",
+            "designation": "Audit Partner",
+            "caSriLankaNo": "",
+            "irdPractitionerNo": "",
+            "firmRegNo": "",
+            "firmAddress": "Colombo, Sri Lanka",
+            "signatureStampUrl": "",
+        },
+        "team": [],
+        "preferences": {
+            "defaultTaxYear": "2025/26 (Apr 1 - Mar 31)",
+            "accountingStandard": "SLFRS / LKAS for SMEs",
+            "materialityThresholdPercent": 5.0,
+            "autoRemindDaysBeforeDeadline": [14, 7, 3],
+            "autoRequestStandardPackOnConnect": True,
+            "strictVatReconciliation": True,
+        },
+        "notifications": {
+            "clientDocumentUploaded": True,
+            "clientResponseReceived": True,
+            "discussionMessageReceived": True,
+            "deadlineApproaching": True,
+            "clientInvitationReceived": True,
+            "digestFrequency": "instant",
+        },
+        "security": {
+            "twoFactorEnabled": False,
+            "sessionTimeoutMinutes": 60,
+            "ipWhitelistEnabled": False,
+            "immutableAuditTrail": True,
+            "activeSessions": [],
+        }
+    }
+
+@router.put("/auditor/profile")
+def update_auditor_profile_endpoint(
+    profile: Dict[str, Any],
+    authorization: Optional[str] = Header(None)
+):
+    user_info = _get_user_info(authorization)
+    auditor_email = user_info.get("email", "").lower().strip() or "default"
+    db = _load_auditor_settings_db()
+    current = db.get(auditor_email) or get_auditor_settings(authorization)
+    current["profile"] = {**current.get("profile", {}), **profile}
+    db[auditor_email] = current
+    _save_auditor_settings_db(db)
+    return current["profile"]
+
+@router.get("/auditor/review-queue")
+def get_auditor_review_queue(authorization: Optional[str] = Header(None)):
+    """
+    Returns the review queue for the logged-in auditor.
+    """
+    companies = get_auditor_companies(authorization)
+    return companies
 
 

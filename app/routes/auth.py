@@ -21,6 +21,13 @@ def normalize_role(role: str) -> str:
         return "COMPANY_ADMIN"
     return role_upper
 
+def format_user_id(user_id: str, role: str) -> str:
+    clean = user_id.replace("-", "").upper()[:8]
+    if "AUDITOR" in (role or "").upper():
+        return f"AUD-{clean}"
+    return f"BIZ-{clean}"
+
+
 @router.post("/register", response_model=AuthResponse)
 def register(req: RegisterRequest):
     """
@@ -92,6 +99,7 @@ def register(req: RegisterRequest):
             token_type="bearer",
             user=UserResponse(
                 id=user_id,
+                formatted_id=format_user_id(user_id, role),
                 email=str(req.email),
                 display_name=req.display_name,
                 role=role,
@@ -170,6 +178,7 @@ def login(req: LoginRequest):
             token_type="bearer",
             user=UserResponse(
                 id=user_id,
+                formatted_id=format_user_id(user_id, role),
                 email=email,
                 display_name=display_name,
                 role=role,
@@ -288,6 +297,7 @@ def get_current_user(authorization: str = Header(None)):
 
         return UserResponse(
             id=user_id,
+            formatted_id=format_user_id(user_id, role),
             email=email,
             display_name=display_name,
             role=role,

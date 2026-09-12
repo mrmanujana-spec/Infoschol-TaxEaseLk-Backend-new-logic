@@ -21,6 +21,7 @@ class ResetPasswordRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: str
+    formatted_id: Optional[str] = None
     email: str
     display_name: Optional[str] = None
     role: Optional[str] = None

@@ -35,89 +35,8 @@ def _save_discussions(threads: List[Dict[str, Any]]):
     except Exception as e:
         print(f"[DiscussionsDB] Failed to save discussions: {e}")
 
-DEFAULT_DISCUSSIONS = [
-    {
-        "id": "disc_1",
-        "companyName": "ABC Holdings (Pvt) Ltd",
-        "company_name": "ABC Holdings (Pvt) Ltd",
-        "topic": "Reconciliation of Taxable Income & GL Variance",
-        "category": "Tax Computation",
-        "lastMessage": "We have attached the updated breakdown for the November discrepancy.",
-        "lastUpdated": "10 mins ago",
-        "unreadCount": 1,
-        "status": "Open",
-        "messages": [
-            {
-                "id": "m_1",
-                "sender": "Mr. Karunaratne (FCA)",
-                "senderRole": "Auditor",
-                "text": "Hello ABC team, we noticed a minor variance in November 2025 General Ledger reconciliation. Could you clarify the entries on line 42?",
-                "timestamp": "Yesterday, 14:30"
-            },
-            {
-                "id": "m_2",
-                "sender": "Admin User (ABC Holdings)",
-                "senderRole": "Company",
-                "text": "Hello! Our finance team reviewed the ledger. It was a timing difference in supplier invoice recognition.",
-                "timestamp": "Today, 09:15"
-            },
-            {
-                "id": "m_3",
-                "sender": "Admin User (ABC Holdings)",
-                "senderRole": "Company",
-                "text": "We have attached the updated breakdown for the November discrepancy.",
-                "timestamp": "10 mins ago"
-            }
-        ]
-    },
-    {
-        "id": "disc_2",
-        "companyName": "Lanka Trading (Pvt) Ltd",
-        "company_name": "Lanka Trading (Pvt) Ltd",
-        "topic": "Depreciation Rates Confirmation for FY2025/26",
-        "category": "Fixed Assets & Depreciation",
-        "lastMessage": "Auditor: Please confirm if straight-line basis was maintained.",
-        "lastUpdated": "2 hours ago",
-        "unreadCount": 0,
-        "status": "Open",
-        "messages": [
-            {
-                "id": "m_4",
-                "sender": "BDO Senior Auditor",
-                "senderRole": "Auditor",
-                "text": "Please confirm if straight-line basis was maintained consistently with the previous financial year for plant machinery.",
-                "timestamp": "2 hours ago"
-            }
-        ]
-    },
-    {
-        "id": "disc_3",
-        "companyName": "Ocean Foods (Pvt) Ltd",
-        "company_name": "Ocean Foods (Pvt) Ltd",
-        "topic": "Tax Exemption Certificate Submission",
-        "category": "Exemptions & Reliefs",
-        "lastMessage": "Auditor: Verified and approved. Thank you!",
-        "lastUpdated": "1 day ago",
-        "unreadCount": 0,
-        "status": "Closed",
-        "messages": [
-            {
-                "id": "m_5",
-                "sender": "Ocean Foods Accountant",
-                "senderRole": "Company",
-                "text": "We have uploaded our BOI tax exemption certificate for fisheries export.",
-                "timestamp": "2 days ago"
-            },
-            {
-                "id": "m_6",
-                "sender": "Certified Tax Auditor",
-                "senderRole": "Auditor",
-                "text": "Verified and approved. Thank you!",
-                "timestamp": "1 day ago"
-            }
-        ]
-    }
-]
+DEFAULT_DISCUSSIONS = []
+
 
 def _sync_supabase_thread(thread: Dict[str, Any]):
     try:
@@ -236,7 +155,7 @@ def create_business_discussion(
     """
     Creates a new discussion thread started by the business client.
     """
-    company = request.company_name.strip() if request.company_name and request.company_name.strip() else "ABC Holdings (Pvt) Ltd"
+    company = request.company_name.strip() if request.company_name and request.company_name.strip() else ""
     now_str = datetime.now().strftime("%d %b, %H:%M")
     thread_id = f"disc_{int(time.time() * 1000)}"
 
