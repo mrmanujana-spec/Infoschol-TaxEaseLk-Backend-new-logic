@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "id": "notif_1789211040182",
+    "recipient_role": "auditor",
+    "company_name": "Mr.Company(PVT)LTD",
+    "user_id": null,
+    "title": "New Client Invitation",
+    "message": "Mr.Company(PVT)LTD has invited you to be their statutory tax auditor for FY2025/26.",
+    "type": "info",
+    "link": "/client-invitations",
+    "is_read": true,
+    "created_at": "Just now"
+  },
+  {
+    "id": "notif_1789206556728",
+    "recipient_role": "auditor",
+    "company_name": "Mr.Companies",
+    "user_id": null,
+    "title": "New Client Invitation",
+    "message": "Mr.Companies has invited you to be their statutory tax auditor for FY2025/26.",
+    "type": "info",
+    "link": "/client-invitations",
+    "is_read": true,
+    "created_at": "Just now"
+  }
+]

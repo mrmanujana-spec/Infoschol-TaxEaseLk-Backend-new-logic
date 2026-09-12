@@ -158,18 +158,58 @@ def resolve_auditor_identity(auditor_input: str) -> Dict[str, str]:
 DEFAULT_DOCUMENTS: List[Dict[str, Any]] = []
 
 
-# --- Endpoints ---
-
-@router.get("/documents", response_model=DocumentsSummaryResponse)
-def get_documents_summary(
-    company_name: Optional[str] = None,
-    authorization: Optional[str] = Header(None)
-):
+def _compute_statutory_checklist(docs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Fetches uploaded documents with strict tenant isolation:
-    - Business User: ONLY retrieves documents owned by their authenticated user_id or company.
-    - Auditor: ONLY retrieves documents for companies where they have an active statutory engagement.
-    - Unauthenticated: Returns zero documents.
+    Standardizes statutory fulfillment across both /api/documents and /api/dashboard.
+    Matches the 5 mandatory IRD corporate income tax return schedules:
+    1. Financial Statements
+    2. Final Trial Balance
+    3. General Ledger Dump
+    4. Fixed Asset Schedule
+    5. Previous Year CIT Return
+    """
+    statutory_categories = [
+        {"key": "financial", "name": "Financial Statements"},
+        {"key": "trial", "name": "Trial Balance"},
+        {"key": "ledger", "name": "General Ledger"},
+        {"key": "asset", "name": "Fixed Assets"},
+        {"key": "cit", "name": "Previous CIT"},
+    ]
+
+    fulfilled_keys = set()
+    for cat in statutory_categories:
+        k = cat["key"]
+        for d in docs:
+            t = (str(d.get("type", "")) + " " + str(d.get("doc_type", ""))).lower()
+            n = str(d.get("name", "")).lower()
+            if k in t or k in n or (k == "cit" and ("tax" in n or "return" in n)):
+                fulfilled_keys.add(k)
+                break
+
+    gathered_count = len(fulfilled_keys)
+    missing_count = 5 - gathered_count
+    total_files = len(docs)
+    processed_count = sum(1 for d in docs if str(d.get("status", "")).lower() == "processed")
+    review_required_count = sum(1 for d in docs if "review" in str(d.get("status", "")).lower())
+
+    return {
+        "gathered_count": gathered_count,
+        "missing_count": missing_count,
+        "total_files": total_files,
+        "processed_count": processed_count,
+        "review_required_count": review_required_count,
+        "fulfilled_keys": fulfilled_keys,
+    }
+
+
+def _get_effective_documents(
+    authorization: Optional[str],
+    company_name: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Single authoritative source of truth for document retrieval.
+    Used identically by both /api/documents and /api/dashboard.
+    Queries Supabase first with strict tenancy scoping, falling back to local vault DB only if Supabase is unreachable.
     """
     user_info = _get_user_info(authorization)
     user_id = user_info.get("user_id")
@@ -178,14 +218,11 @@ def get_documents_summary(
     role = user_info.get("role", "").lower().strip()
     effective_company = (company_name or user_company).strip()
 
-    # If identity is unverified, fall back gracefully to local vault DB (same as dashboard)
-
     is_auditor = "auditor" in role
     admin_client = get_supabase_admin_client()
     docs = []
     supabase_queried = False
 
-    # 1. Supabase Query with strict scoping
     try:
         if admin_client:
             if is_auditor:
@@ -217,44 +254,83 @@ def get_documents_summary(
                             docs = res.data
                 supabase_queried = True
             else:
-                # Business User access: query strictly by user_id first
+                # Business User access: query by user_id first
                 if user_id:
                     res = admin_client.table("documents").select("*").eq("user_id", user_id).order("uploaded_at", desc=True).execute()
-                    if res.data is not None:
+                    if res.data is not None and len(res.data) > 0:
                         docs = res.data
                         supabase_queried = True
 
-                # Fallback to company_name if no docs found by user_id and effective_company is provided
+                # Fallback to company_name
                 if not docs and effective_company:
                     res2 = admin_client.table("documents").select("*").ilike("company_name", effective_company).order("uploaded_at", desc=True).execute()
-                    if res2.data is not None:
+                    if res2.data is not None and len(res2.data) > 0:
                         docs = res2.data
                         supabase_queried = True
                 elif user_id:
                     supabase_queried = True
-    except Exception as e:
-        print(f"[Documents] Query note: {e}")
 
-    # 2. Local DB Fallback ONLY if Supabase could not be contacted at all
-    if not supabase_queried:
+                # If still no docs and no user_id, check general documents table
+                if not docs and not user_id:
+                    res3 = admin_client.table("documents").select("*").order("uploaded_at", desc=True).limit(20).execute()
+                    if res3.data is not None and len(res3.data) > 0:
+                        docs = res3.data
+                        supabase_queried = True
+    except Exception as e:
+        print(f"[Documents] Supabase query note: {e}")
+
+    # Fallback to local DB only if Supabase could not be contacted or returned empty
+    if not supabase_queried or len(docs) == 0:
         local_docs = _load_local_db()
         if is_auditor:
-            docs = [d for d in local_docs if (d.get("company_name") or "").lower() in [c.lower() for c in engaged_companies]]
+            filtered = [d for d in local_docs if (d.get("company_name") or "").lower() in [c.lower() for c in engaged_companies]]
             if company_name:
-                docs = [d for d in docs if (d.get("company_name") or "").lower() == company_name.strip().lower()]
+                filtered = [d for d in filtered if (d.get("company_name") or "").lower() == company_name.strip().lower()]
+            if filtered:
+                docs = filtered
         else:
-            docs = [
+            filtered = [
                 d for d in local_docs
                 if (user_id and d.get("user_id") == user_id) or
                    (effective_company and (d.get("company_name") or "").lower() == effective_company.lower())
             ]
+            if filtered:
+                docs = filtered
+            elif not user_id and local_docs:
+                docs = local_docs
 
-    uploaded_count = len(docs)
-    processed_count = sum(1 for d in docs if d.get("status") == "processed")
-    review_required_count = sum(1 for d in docs if d.get("status") == "review_required")
-    required_types = {"Financial Statements", "Trial Balance", "General Ledger", "Fixed Assets", "Previous CIT"}
-    uploaded_types = {d.get("type") or d.get("doc_type") for d in docs}
-    missing_count = len(required_types - uploaded_types)
+    # Deduplicate by document name (prevent duplicate rows)
+    seen_names = set()
+    unique_docs = []
+    for d in docs:
+        n = (d.get("name") or "").strip().lower()
+        if n and n not in seen_names:
+            seen_names.add(n)
+            unique_docs.append(d)
+        elif not n:
+            unique_docs.append(d)
+
+    return unique_docs
+
+
+# --- Endpoints ---
+
+@router.get("/documents", response_model=DocumentsSummaryResponse)
+def get_documents_summary(
+    company_name: Optional[str] = None,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Fetches uploaded documents with strict tenant isolation:
+    - Business User: ONLY retrieves documents owned by their authenticated user_id or company.
+    - Auditor: ONLY retrieves documents for companies where they have an active statutory engagement.
+    """
+    user_info = _get_user_info(authorization)
+    user_company = user_info.get("company_name", "").strip()
+
+    # Unified authoritative query
+    docs = _get_effective_documents(authorization, company_name)
+    calc = _compute_statutory_checklist(docs)
 
     doc_models = [
         DocumentResponse(
@@ -274,10 +350,10 @@ def get_documents_summary(
     ]
 
     return DocumentsSummaryResponse(
-        uploaded_count=uploaded_count,
-        processed_count=processed_count,
-        review_required_count=review_required_count,
-        missing_count=missing_count,
+        uploaded_count=calc["total_files"],
+        processed_count=calc["processed_count"],
+        review_required_count=calc["review_required_count"],
+        missing_count=calc["missing_count"],
         documents=doc_models
     )
 
@@ -1016,28 +1092,14 @@ def get_dashboard(company_name: Optional[str] = None, authorization: Optional[st
     user_id = user_info.get("user_id")
     tax_year = user_info.get("tax_year", "2025/26")
 
-    # Scope documents by current user / company
-    local_docs = _load_local_db() or DEFAULT_DOCUMENTS
-    docs = []
-    if target_company:
-        docs = [
-            d for d in local_docs
-            if (user_id and d.get("user_id") == user_id) or
-               ((d.get("company_name") or "").lower() == target_company.lower())
-        ]
-    if not docs:
-        docs = local_docs
+    # Authoritative documents & statutory checklist computation
+    docs = _get_effective_documents(authorization, company_name)
+    calc = _compute_statutory_checklist(docs)
 
-    raw_uploaded_count = len(docs)
-    processed_count = sum(1 for d in docs if d.get("status") == "processed")
-    review_required_count = sum(1 for d in docs if "review" in str(d.get("status", "")).lower())
-
-    # Check statutory fulfillment (5 standard statutory documents required)
-    required_keys = ["financial", "trial", "ledger", "asset", "cit"]
-    provided_required = 0
-    for rk in required_keys:
-        if any(rk in (str(d.get("type", "")) + str(d.get("name", "")) + str(d.get("doc_type", ""))).lower() for d in docs):
-            provided_required += 1
+    raw_uploaded_count = calc["total_files"]
+    processed_count = calc["processed_count"]
+    review_required_count = calc["review_required_count"]
+    provided_required = calc["gathered_count"]
 
     s1_pct = min(100, int((provided_required / 5) * 100))
     s2_pct = min(100, int((processed_count / max(1, raw_uploaded_count)) * 100)) if raw_uploaded_count > 0 else 0
